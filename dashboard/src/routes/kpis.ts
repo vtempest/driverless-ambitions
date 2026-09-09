@@ -3,6 +3,8 @@ import { authenticate } from "../auth";
 import { computeKpis, snapshotKpis } from "../kpi";
 import { renderPrometheus } from "../metrics";
 import { openApiDocument } from "../openapi";
+import { planTraining } from "../training";
+import { datasetInventory } from "./training";
 import { json, parseJsonColumn } from "../util";
 
 export async function getKpis(c: RouteContext): Promise<Response> {
@@ -13,12 +15,22 @@ export async function getKpis(c: RouteContext): Promise<Response> {
 /** Prometheus / Grafana scrape target. */
 export async function getMetrics(c: RouteContext): Promise<Response> {
   const who = await authenticate(c.request, c.env, "reader");
-  const [report, fleet, scores] = await Promise.all([
+  const [report, fleet, scores, dataset] = await Promise.all([
     computeKpis(c.env, who.tenant),
     c.env.DB.prepare("SELECT COUNT(*) AS devices, SUM(CASE WHEN last_t >= ?2 THEN 1 ELSE 0 END) AS online FROM fleet_devices WHERE tenant_id = ?1").bind(who.tenant, Date.now() / 1000 - 300).first<{ devices: number; online: number | null }>(),
     c.env.DB.prepare("SELECT AVG(driving_score) AS avg_score, COUNT(driving_score) AS scored FROM runs WHERE tenant_id = ?1 AND driving_score IS NOT NULL").bind(who.tenant).first<{ avg_score: number | null; scored: number }>(),
+    datasetInventory(c.env, who.tenant),
   ]);
-  const extra: Record<string, number> = { atlas_fleet_devices: fleet?.devices || 0, atlas_fleet_devices_online: fleet?.online || 0, atlas_runs_scored: scores?.scored || 0 };
+  const plan = planTraining(dataset);
+  const extra: Record<string, number> = {
+    atlas_fleet_devices: fleet?.devices || 0,
+    atlas_fleet_devices_online: fleet?.online || 0,
+    atlas_runs_scored: scores?.scored || 0,
+    atlas_dataset_scenes: dataset.scenes,
+    atlas_dataset_stored_bytes: dataset.stored_bytes,
+    atlas_dataset_coverage_empty_cells: dataset.coverage.matrix.empty_cells,
+    atlas_dataset_scenes_to_next_tier: plan.scenes_to_next_tier,
+  };
   if (scores?.avg_score !== null && scores?.avg_score !== undefined) extra.atlas_driving_score_avg = Math.round(scores.avg_score * 100) / 100;
   return new Response(renderPrometheus(report, extra), { headers: { "content-type": "text/plain; version=0.0.4; charset=utf-8", "cache-control": "no-store" } });
 }

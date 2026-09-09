@@ -25,6 +25,11 @@ Beyond the run/scenario/evaluation/clip API, the Worker also exposes:
 * `GET /api/fleet/live`, `/api/ingest/traccar`, `/api/ingest/osmand` — live
   fleet positions from [Traccar](https://github.com/traccar/traccar) or the
   OsmAnd phone protocol, shown on the Fleet tab.
+* `GET /api/training/plan` — training-set inventory, sizing tiers (1k / 10k /
+  100k scenes), day-night / rain-fog / road-type coverage gaps and a
+  low/typical/high GPU budget for marketplace A100 and H100 listings;
+  `?format=markdown` returns the same plan as a budget memo. Shown on the
+  **Training set** tab.
 * `GET /api/metrics` — Prometheus exposition for Grafana.
 * `GET /api/openapi.json` — OpenAPI 3.1 description of the whole API.
 * A [CARLA Leaderboard](https://github.com/carla-simulator/leaderboard)-style

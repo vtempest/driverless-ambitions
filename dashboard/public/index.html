@@ -22,6 +22,7 @@
       <button class="tab" data-view="runs" role="tab">Runs &amp; playback</button>
       <button class="tab" data-view="scenarios" role="tab">Scenario library</button>
       <button class="tab" data-view="evaluations" role="tab">Evaluations</button>
+      <button class="tab" data-view="training" role="tab">Training set</button>
       <button class="tab" data-view="governance" role="tab">Safety &amp; governance</button>
       <button class="tab" data-view="fleet" role="tab">Fleet</button>
     </nav>
@@ -145,6 +146,46 @@
           <div id="eval-class-chart" class="chart"></div>
           <h3>Failure clusters</h3>
           <table id="eval-clusters" class="data-table"><thead><tr><th>Class</th><th>Weather</th><th>Lighting</th><th>Range</th><th>Missed</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+    </section>
+
+    <section id="view-training" class="view" aria-label="Training set and compute budget">
+      <div class="section-head">
+        <h1>Training set &amp; compute budget</h1>
+        <p class="muted">How far the catalog is from a training set that generalises, where condition coverage is thin, and what a run on marketplace GPUs (Vast.ai-style A100 / H100 listings) would cost. Rates are reference brackets — override them with a real listing before quoting a number.</p>
+        <div class="filters">
+          <label>Workload <select id="train-workload"></select></label>
+          <label>GPU <select id="train-gpu"></select></label>
+          <label>Pricing <select id="train-pricing"><option value="on_demand">on-demand</option><option value="interruptible">interruptible</option></select></label>
+          <label>Target scenes <input id="train-scenes" type="number" min="0" step="1000" placeholder="next tier" style="width:110px"></label>
+          <label>$/GPU-h <input id="train-rate" type="number" min="0" step="0.05" placeholder="reference" style="width:100px"></label>
+          <button id="train-memo">Budget memo</button>
+        </div>
+      </div>
+      <div id="train-tiles" class="kpi-grid" aria-live="polite"></div>
+      <div class="two-col">
+        <div class="card">
+          <h2>Sizing tiers <span class="muted">scenes against the rule of thumb</span></h2>
+          <div id="train-tiers" class="progress-rows"></div>
+          <h3>What to collect next</h3>
+          <div id="train-recs" class="recs"></div>
+        </div>
+        <div class="card">
+          <h2>Budget <span class="muted">low / typical / high</span></h2>
+          <div id="train-budget"></div>
+          <h3>Assumptions</h3>
+          <ul id="train-assumptions" class="assumptions"></ul>
+        </div>
+      </div>
+      <div class="two-col">
+        <div class="card">
+          <h2>Condition coverage <span class="muted">day/night, rain/fog and road type; thin buckets bias the model</span></h2>
+          <div id="train-coverage"></div>
+        </div>
+        <div class="card">
+          <h2>Coverage matrix <span class="muted">route class × lighting, scenes per cell</span></h2>
+          <div id="train-matrix" class="table-card"></div>
         </div>
       </div>
     </section>

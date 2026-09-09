@@ -11,12 +11,14 @@ import { getKpiHistory, getKpis, getMetrics, getOpenApi, listAudit, postKpiSnaps
 import { runEvidence } from "./routes/evidence";
 import { exportRun, exportScenarioXosc } from "./routes/exports";
 import { deviceTrack, ingestOsmAnd, ingestTraccar, listFleet, materializeTrack, postPositions } from "./routes/fleet";
+import { getTrainingPlan } from "./routes/training";
 
 const router = new Router()
   .get("/api/health", (c) => json({ ok: true, app: c.env.APP_NAME, time: new Date().toISOString() }))
   .get("/api/openapi.json", getOpenApi)
   .get("/api/metrics", getMetrics)
   .get("/api/kpis", getKpis)
+  .get("/api/training/plan", getTrainingPlan)
   .get("/api/kpis/history", getKpiHistory)
   .post("/api/kpis/snapshot", postKpiSnapshot)
   .get("/api/runs", listRuns)

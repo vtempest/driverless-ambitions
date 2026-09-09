@@ -17,6 +17,7 @@
     playback: { t: 0, playing: false, raf: null, t0: 0, t1: 0 },
     deck: null,
     history: [],
+    training: null,
     fleet: { devices: [], device: null, track: [], deck: null, timer: null },
   };
 
@@ -577,6 +578,114 @@
       <tr><td class="mono">${esc(a.created_at)}</td><td class="mono">${esc(a.actor)}</td><td>${esc(a.action)}</td><td class="mono">${esc(a.target || "")}</td><td class="mono">${esc(a.detail ? JSON.stringify(a.detail) : "")}</td></tr>`).join("") || '<tr><td colspan="5" class="empty">empty</td></tr>';
   }
 
+  // --------------------------------------------------------- training budget
+  const usd = (n) => "$" + Math.round(n).toLocaleString("en-US");
+  const count = (n) => Number(n || 0).toLocaleString("en-US");
+
+  function trainingQuery(extra) {
+    const params = new URLSearchParams();
+    const set = (key, value) => { if (value) params.set(key, value); };
+    set("workload", $("#train-workload").value);
+    set("gpu", $("#train-gpu").value);
+    set("pricing", $("#train-pricing").value);
+    const scenes = Number($("#train-scenes").value);
+    if (scenes > 0) params.set("scenes", String(Math.round(scenes)));
+    const rate = Number($("#train-rate").value);
+    if (rate > 0) params.set("rate_usd_hr", String(rate));
+    for (const [k, v] of Object.entries(extra || {})) params.set(k, v);
+    return params.toString();
+  }
+
+  /** Fill the workload and GPU pickers once, keeping whatever the user chose. */
+  function fillTrainingSelects(options) {
+    const workload = $("#train-workload"), gpu = $("#train-gpu");
+    if (!workload.options.length) {
+      workload.innerHTML = options.workloads.map((w) => `<option value="${esc(w.id)}" title="${esc(w.why)}">${esc(w.label)}</option>`).join("");
+    }
+    if (!gpu.options.length) {
+      gpu.innerHTML = options.gpus.map((g) => `<option value="${esc(g.id)}" title="${esc(g.note)}">${esc(g.label)}</option>`).join("");
+    }
+  }
+
+  async function loadTraining() {
+    const data = await api("/api/training/plan?" + trainingQuery());
+    state.training = data;
+    fillTrainingSelects(data.options);
+    renderTraining();
+  }
+
+  function renderTraining() {
+    const data = state.training;
+    if (!data) return;
+    const inv = data.inventory, plan = data.plan, compute = plan.compute, storage = plan.storage;
+
+    $("#train-tiles").innerHTML = [
+      { label: "Scenes in catalog", value: count(inv.scenes), unit: "", target: `${count(inv.clips)} clips + ${count(inv.runs - inv.runs_with_clips)} un-clipped runs`, status: plan.current_tier ? "on_track" : "at_risk", why: plan.current_tier ? plan.current_tier.label : "below proof of concept (1,000 scenes)" },
+      { label: "Recorded", value: fmt.num(inv.hours, 1), unit: "h", target: `${fmt.num(inv.distance_km, 0)} km · ${inv.sim_runs} sim / ${inv.vehicle_runs} vehicle runs`, status: inv.hours > 0 ? "on_track" : "no_data", why: "Sequence length matters as much as frame count" },
+      { label: "Average scene", value: inv.avg_scene_seconds === null ? "–" : fmt.num(inv.avg_scene_seconds, 1), unit: "s", target: ">= 10 s for behaviour cloning", status: inv.avg_scene_seconds === null ? "no_data" : inv.avg_scene_seconds >= 10 ? "on_track" : "at_risk", why: "End-to-end driving trains on sequences, not frames" },
+      { label: "Dataset at target", value: fmt.num(storage.dataset_gb, 1), unit: "GB", target: `${count(plan.target_scenes)} scenes × ${fmt.num(storage.bytes_per_scene / 1e6, 1)} MB (${storage.bytes_per_scene_source})`, status: "info", why: `Rent ${count(storage.instance_disk_gb)} GB of disk; instances default to ${storage.default_instance_disk_gb} GB` },
+      { label: "Budget, typical", value: usd(plan.total_usd.typical), unit: "", target: `${usd(plan.total_usd.low)} – ${usd(plan.total_usd.high)}`, status: "info", why: `${compute.workload.label} on ${compute.gpu.label}` },
+    ].map((t) => `
+      <div class="kpi">
+        <div class="kpi-label">${esc(t.label)}</div>
+        <div class="kpi-value">${esc(t.value)}${t.unit ? `<small>${esc(t.unit)}</small>` : ""}</div>
+        <div class="kpi-target">${esc(t.target)}</div>
+        ${t.status === "info" ? "" : pill(t.status)}
+        <div class="kpi-why">${esc(t.why)}</div>
+      </div>`).join("");
+
+    $("#train-tiers").innerHTML = plan.tiers.map((t) => `
+      <div class="progress-row">
+        <div class="head"><b>${esc(t.tier.label)}</b><span>${count(t.tier.min_scenes)}${t.tier.max_scenes ? "–" + count(t.tier.max_scenes) : "+"} scenes · ${t.reached ? "reached" : count(t.scenes_short) + " short"}</span></div>
+        <div class="bar"><i class="${t.reached ? "reached" : ""}" style="width:${Math.min(100, t.progress_pct)}%"></i></div>
+        <div class="why">${esc(t.tier.why)}</div>
+      </div>`).join("");
+
+    $("#train-recs").innerHTML = data.recommendations.map((r) => `<div class="rec ${esc(r.severity)}"><span>${esc(r.message)}</span></div>`).join("")
+      || '<div class="rec info"><span>no gaps flagged</span></div>';
+
+    $("#train-budget").innerHTML = `
+      <table class="data-table">
+        <thead><tr><th>Estimate</th><th class="num">GPU-hours</th><th class="num">Compute</th><th class="num">Disk</th><th class="num">Total</th></tr></thead>
+        <tbody>
+          <tr><td>Low</td><td class="num">${count(compute.gpu_hours.low)}</td><td class="num">${usd(compute.cost_usd.low)}</td><td class="num">${usd(storage.disk_usd)}</td><td class="num">${usd(plan.total_usd.low)}</td></tr>
+          <tr class="total-row"><td>Typical</td><td class="num">${count(Math.round((compute.gpu_hours.low + compute.gpu_hours.high) / 2))}</td><td class="num">${usd(compute.cost_usd.typical)}</td><td class="num">${usd(storage.disk_usd)}</td><td class="num">${usd(plan.total_usd.typical)}</td></tr>
+          <tr><td>High</td><td class="num">${count(compute.gpu_hours.high)}</td><td class="num">${usd(compute.cost_usd.high)}</td><td class="num">${usd(storage.disk_usd)}</td><td class="num">${usd(plan.total_usd.high)}</td></tr>
+        </tbody>
+      </table>
+      <div class="muted" style="margin-top:8px">
+        ${esc(compute.gpu.label)} · ${esc(compute.pricing.replace("_", "-"))} · $${fmt.num(compute.rate_usd_hr.low, 2)}–$${fmt.num(compute.rate_usd_hr.high, 2)}/GPU-hour (${esc(compute.rate_source)}) ·
+        ${count(compute.preprocess_gpu_hours)} GPU-hours of that is preprocessing · target ${count(plan.target_scenes)} scenes (${esc(plan.target_basis)})
+      </div>`;
+
+    $("#train-assumptions").innerHTML = plan.assumptions.map((a) => `<li>${esc(a)}</li>`).join("");
+
+    $("#train-coverage").innerHTML = inv.coverage.dimensions.map((dim) => `
+      <h3>${esc(dim.label)}</h3>
+      <table class="data-table"><tbody>${dim.buckets.map((b) => `
+        <tr><td>${esc(b.bucket)}${b.gap ? ' <span class="pill warning">thin</span>' : ""}</td>
+        <td style="width:45%"><div class="coverage-bar"><i class="${b.gap ? "gap" : ""}" style="width:${Math.round(b.share * 100)}%"></i></div></td>
+        <td class="num">${count(b.count)}</td><td class="num">${Math.round(b.share * 100)} %</td></tr>`).join("")
+        || '<tr><td class="empty">no scenes</td></tr>'}</tbody></table>`).join("");
+
+    const matrix = inv.coverage.matrix;
+    if (!matrix.cells.length) {
+      $("#train-matrix").innerHTML = '<div class="empty">no runs linked to scenarios yet</div>';
+    } else {
+      const max = Math.max(1, ...matrix.cells.map((c) => c.count));
+      $("#train-matrix").innerHTML = `
+        <table class="data-table matrix">
+          <thead><tr><th>route class \\ lighting</th>${matrix.columns.map((c) => `<th class="num">${esc(c)}</th>`).join("")}</tr></thead>
+          <tbody>${matrix.rows.map((row) => `<tr><td>${esc(row)}</td>${matrix.columns.map((col) => {
+            const cell = matrix.cells.find((c) => c.route_class === row && c.lighting === col) || { count: 0 };
+            const shade = Math.round((cell.count / max) * 100);
+            return `<td class="cell ${cell.count ? "" : "zero"}" style="background: color-mix(in srgb, var(--seq-500) ${shade * 0.6}%, transparent)">${cell.count || "—"}</td>`;
+          }).join("")}</tr>`).join("")}</tbody>
+        </table>
+        <div class="muted" style="margin-top:8px">${matrix.empty_cells} of ${matrix.cells.length} cells are empty. Cells come from the scenario linked to each run, so runs uploaded without a <code>scenario_id</code> land in <code>unspecified</code>.</div>`;
+    }
+  }
+
   // ------------------------------------------------------------------- fleet
   const FLEET_RGB = { online: [27, 175, 122], stale: [250, 178, 25], offline: [122, 121, 115] };
   const deviceStatus = (d) => (d.age_s === null ? "offline" : d.age_s < 300 ? "online" : d.age_s < 3600 ? "stale" : "offline");
@@ -662,7 +771,7 @@
   }
 
   // ------------------------------------------------------------------ wiring
-  const loaders = { overview: loadOverview, runs: loadRuns, scenarios: loadScenarios, evaluations: loadEvaluations, governance: loadGovernance, fleet: loadFleet };
+  const loaders = { overview: loadOverview, runs: loadRuns, scenarios: loadScenarios, evaluations: loadEvaluations, training: loadTraining, governance: loadGovernance, fleet: loadFleet };
 
   function setHash(view, id) {
     const next = "#" + view + (id ? "/" + encodeURIComponent(id) : "");
@@ -725,6 +834,9 @@
     menu.querySelectorAll("button[data-export]").forEach((b) => b.addEventListener("click", () => exportRun(b.dataset.export)));
     menu.querySelector("button[data-foxglove]").addEventListener("click", openInFoxglove);
     $("#trend-kpi").addEventListener("change", renderTrend);
+    ["#train-workload", "#train-gpu", "#train-pricing"].forEach((id) => $(id).addEventListener("change", () => loadTraining().catch((err) => toast(err.message))));
+    ["#train-scenes", "#train-rate"].forEach((id) => $(id).addEventListener("change", () => loadTraining().catch((err) => toast(err.message))));
+    $("#train-memo").addEventListener("click", () => download("/api/training/plan?" + trainingQuery({ format: "markdown" }), "training-budget.md").catch((err) => toast(err.message)));
     $("#fleet-refresh").addEventListener("click", () => loadFleet().catch((err) => toast(err.message)));
     $("#fleet-auto").addEventListener("change", scheduleFleetRefresh);
     $("#fleet-window").addEventListener("change", () => { if (state.fleet.device) selectDevice(state.fleet.device).catch((err) => toast(err.message)); });
