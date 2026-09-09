@@ -18,6 +18,7 @@
     deck: null,
     history: [],
     fleet: { devices: [], device: null, track: [], deck: null, timer: null },
+    coverage: null,     // ODD coverage matrix on the planning tab
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -27,6 +28,7 @@
     time: (s) => (s ? new Date(s * 1000).toLocaleString() : "–"),
     dur: (s) => (s ? (s >= 3600 ? (s / 3600).toFixed(1) + " h" : (s / 60).toFixed(1) + " min") : "–"),
     bytes: (b) => (b >= 1e9 ? (b / 1e9).toFixed(2) + " GB" : b >= 1e6 ? (b / 1e6).toFixed(1) + " MB" : b >= 1e3 ? (b / 1e3).toFixed(0) + " kB" : b + " B"),
+    usd: (v) => (v === null || v === undefined ? "–" : v >= 1e6 ? "$" + (v / 1e6).toFixed(1) + "M" : v >= 1000 ? "$" + (v / 1000).toFixed(v >= 10000 ? 0 : 1) + "k" : "$" + Math.round(v)),
   };
   const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
   const pill = (status) => `<span class="pill ${esc(status)}">${esc(String(status).replace(/_/g, " "))}</span>`;
@@ -661,8 +663,122 @@
     } catch (err) { toast(err.message); }
   }
 
+  // ------------------------------------------------- coverage and compute
+  function planParams() {
+    const params = new URLSearchParams();
+    const scenes = $("#plan-scenes").value;
+    if ($("#plan-tier").value) params.set("tier", $("#plan-tier").value);
+    if (scenes) params.set("scenes", scenes);
+    if ($("#plan-workload").value) params.set("workload", $("#plan-workload").value);
+    if ($("#plan-gpu").value) params.set("gpu", $("#plan-gpu").value);
+    if ($("#plan-seconds").value) params.set("seconds_per_scene", $("#plan-seconds").value);
+    if ($("#plan-resolution").value) params.set("resolution", $("#plan-resolution").value);
+    if ($("#plan-streams").value) params.set("camera_streams", $("#plan-streams").value);
+    if ($("#plan-interruptible").checked) params.set("interruptible", "1");
+    params.set("min_runs", $("#coverage-min-runs").value || "3");
+    return params;
+  }
+
+  function fillSelect(sel, items, value, labelOf) {
+    if (sel.options.length !== items.length) {
+      sel.innerHTML = items.map((it) => `<option value="${esc(it.id)}">${esc(labelOf(it))}</option>`).join("");
+    }
+    if (value !== undefined && value !== null) sel.value = value;
+  }
+
+  function renderCoverage(cov) {
+    const t = cov.totals;
+    $("#coverage-summary").innerHTML =
+      `<span>ODD cells <b>${t.cells}</b></span>` +
+      `<span>Covered <b>${t.covered_cells}</b> <span class="muted">${fmt.num(t.coverage_pct, 1)} %</span></span>` +
+      `<span>Thin <b>${t.thin_cells}</b></span>` +
+      `<span>Gaps <b>${t.gap_cells}</b></span>` +
+      `<span>Scenario variants <b>${t.scenarios}</b></span>` +
+      `<span>Runs <b>${t.runs}</b> <span class="muted">${t.accepted_runs} accepted</span></span>` +
+      `<span class="infraction">a cell counts as covered at ${cov.min_runs_per_cell}+ accepted runs</span>`;
+
+    const cell = (v, l) => cov.cells.find((c) => c.visibility === v && c.lighting === l);
+    const head = cov.axes.lighting.map((l) => `<th class="num">${esc(l.replace(/_/g, " "))}</th>`).join("");
+    const rows = cov.axes.visibility.map((v) => {
+      const cells = cov.axes.lighting.map((l) => {
+        const c = cell(v, l) || { status: "gap", scenarios: 0, runs: 0, accepted_runs: 0, duration_s: 0, odd: true };
+        const title = c.odd
+          ? `${c.scenarios} variants · ${c.runs} runs (${c.accepted_runs} accepted) · ${fmt.dur(c.duration_s)}`
+          : `runs with no scenario behind them — not an ODD cell, not counted in coverage`;
+        return `<td class="cell ${esc(c.status)}${c.odd ? "" : " outside"}" title="${esc(title)}"><b>${c.accepted_runs}</b><small>${c.scenarios} var</small></td>`;
+      }).join("");
+      return `<tr><th scope="row">${esc(v.replace(/_/g, " "))}</th>${cells}</tr>`;
+    }).join("");
+    $("#coverage-matrix").innerHTML = `<table class="data-table matrix"><thead><tr><th></th>${head}</tr></thead><tbody>${rows}</tbody></table>`;
+
+    barChart($("#coverage-route-chart"), {
+      rows: cov.by_route_class.slice(0, 12).map((r) => ({ label: r.route_class.replace(/_/g, " "), values: [r.scenarios, r.accepted_runs] })),
+      series: [{ name: "scenario variants" }, { name: "accepted runs" }],
+    });
+
+    const body = $("#coverage-gaps tbody");
+    const gaps = cov.gaps.slice(0, 12);
+    body.innerHTML = gaps.length
+      ? gaps.map((g) => `<tr><td>${esc(g.visibility.replace(/_/g, " "))}</td><td>${esc(g.lighting.replace(/_/g, " "))}</td><td class="num">${g.scenarios}</td><td class="num">${g.runs}</td><td>${pill(g.status)}</td></tr>`).join("")
+      : '<tr><td colspan="5" class="empty">every cell has enough accepted runs</td></tr>';
+  }
+
+  function renderPlan(data) {
+    const p = data.plan;
+    const o = data.options;
+    fillSelect($("#plan-tier"), o.tiers, p.tier.id, (t) => `${t.label} (${t.min_scenes.toLocaleString("en-US")}${t.max_scenes ? "–" + t.max_scenes.toLocaleString("en-US") : "+"} scenes)`);
+    fillSelect($("#plan-workload"), o.workloads, p.workload.id, (w) => w.label);
+    fillSelect($("#plan-gpu"), o.gpus, p.gpu.id, (g) => `${g.label} · $${g.hourly.low}–$${g.hourly.high}/h`);
+    fillSelect($("#plan-resolution"), o.resolutions, p.dataset.resolution || "1080p", (r) => `${r.id} · ${r.mbps} Mbit/s`);
+    if (!$("#plan-scenes").value) $("#plan-scenes").value = p.scenes.target;
+    if (!$("#plan-seconds").value) $("#plan-seconds").value = p.dataset.seconds_per_scene;
+    $("#plan-basis").textContent = `catalog: ${data.catalog.accepted_runs} accepted runs · ${data.catalog.scenarios} variants · ${data.catalog.clips} clips` +
+      (data.catalog.mb_per_clip ? ` · ${fmt.num(data.catalog.mb_per_clip, 1)} MB/clip measured` : "");
+
+    const card = (label, value, unit, note) => `
+      <div class="kpi">
+        <div class="kpi-label">${esc(label)}</div>
+        <div class="kpi-value">${esc(value)}<small>${esc(unit)}</small></div>
+        <div class="kpi-why">${esc(note)}</div>
+      </div>`;
+    $("#plan-cards").innerHTML =
+      card("Scenes still to produce", p.scenes.short.toLocaleString("en-US"), `of ${p.scenes.target.toLocaleString("en-US")}`, `${p.scenes.have.toLocaleString("en-US")} already accepted · ${p.tier.why}`) +
+      card("Dataset size", fmt.num(p.storage.gb.mid, 0), "GB", `${fmt.num(p.dataset.mb_per_scene, 1)} MB per scene · ${fmt.num(p.dataset.total_hours, 0)} h of footage`) +
+      card("GPU-hours", fmt.num(p.training.gpu_hours.mid + p.generation.gpu_hours.mid, 0), `h on ${p.gpu.label}`, `render ${fmt.num(p.generation.gpu_hours.mid, 0)} h + train ${fmt.num(p.training.gpu_hours.mid, 0)} h`) +
+      card("Total compute cost", fmt.usd(p.total_cost_usd.mid), `mid · ${p.interruptible ? "interruptible" : "on-demand"}`, `${fmt.usd(p.total_cost_usd.low)} – ${fmt.usd(p.total_cost_usd.high)} at $${p.rate_usd_per_hour.low}–$${p.rate_usd_per_hour.high}/h`);
+
+    const money = (band) => [fmt.usd(band.low), fmt.usd(band.mid), fmt.usd(band.high)];
+    const hours = (band) => [fmt.num(band.low, 0) + " h", fmt.num(band.mid, 0) + " h", fmt.num(band.high, 0) + " h"];
+    const rows = [
+      ["Scene generation (CARLA render)", hours(p.generation.gpu_hours), `${p.scenes.short.toLocaleString("en-US")} scenes × ${p.dataset.seconds_per_scene} s at 0.5–2× real time`],
+      ["Scene generation cost", money(p.generation.cost_usd), `at $${p.rate_usd_per_hour.low}–$${p.rate_usd_per_hour.high}/h`],
+      ["Training GPU-hours", hours(p.training.gpu_hours), `${p.workload.label} · ${p.gpu.throughput}× A100 throughput`],
+      ["Training cost", money(p.training.cost_usd), p.workload.why],
+      ["Storage", [fmt.num(p.storage.gb.low, 0) + " GB", fmt.num(p.storage.gb.mid, 0) + " GB", fmt.num(p.storage.gb.high, 0) + " GB"], "video plus telemetry, labels and manifests"],
+      ["Storage per month", money(p.storage.cost_usd_per_month), "marketplace volume pricing"],
+      ["Total", money(p.total_cost_usd), "generation + training + one month of storage"],
+    ];
+    $("#plan-table tbody").innerHTML = rows.map(([label, values, basis], i) =>
+      `<tr${i === rows.length - 1 ? ' class="is-total"' : ""}><td>${esc(label)}</td>${values.map((v) => `<td class="num mono">${esc(v)}</td>`).join("")}<td class="muted">${esc(basis)}</td></tr>`).join("");
+    $("#plan-assumptions").innerHTML = p.assumptions.map((a) => `<li>${esc(a)}</li>`).join("");
+  }
+
+  async function loadPlanning() {
+    const [coverage, plan] = await Promise.all([
+      api("/api/coverage?min_runs=" + encodeURIComponent($("#coverage-min-runs").value || "3")),
+      api("/api/plan?" + planParams().toString()),
+    ]);
+    state.coverage = coverage;
+    renderCoverage(coverage);
+    renderPlan(plan);
+  }
+
+  async function refreshPlan() {
+    try { renderPlan(await api("/api/plan?" + planParams().toString())); } catch (err) { toast(err.message); }
+  }
+
   // ------------------------------------------------------------------ wiring
-  const loaders = { overview: loadOverview, runs: loadRuns, scenarios: loadScenarios, evaluations: loadEvaluations, governance: loadGovernance, fleet: loadFleet };
+  const loaders = { overview: loadOverview, runs: loadRuns, scenarios: loadScenarios, evaluations: loadEvaluations, governance: loadGovernance, fleet: loadFleet, planning: loadPlanning };
 
   function setHash(view, id) {
     const next = "#" + view + (id ? "/" + encodeURIComponent(id) : "");
@@ -729,9 +845,14 @@
     $("#fleet-auto").addEventListener("change", scheduleFleetRefresh);
     $("#fleet-window").addEventListener("change", () => { if (state.fleet.device) selectDevice(state.fleet.device).catch((err) => toast(err.message)); });
     $("#fleet-materialize").addEventListener("click", materializeTrack);
+    $("#coverage-refresh").addEventListener("click", () => loadPlanning().catch((err) => toast(err.message)));
+    $("#coverage-min-runs").addEventListener("change", () => loadPlanning().catch((err) => toast(err.message)));
+    $("#plan-tier").addEventListener("change", () => { $("#plan-scenes").value = ""; refreshPlan(); });
+    ["#plan-workload", "#plan-gpu", "#plan-resolution", "#plan-interruptible"].forEach((id) => $(id).addEventListener("change", refreshPlan));
+    ["#plan-scenes", "#plan-seconds", "#plan-streams"].forEach((id) => $(id).addEventListener("change", refreshPlan));
     $("#fleet-table").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-track]"); if (b) { ev.stopPropagation(); selectDevice(b.dataset.track).catch((err) => toast(err.message)); } });
     window.addEventListener("hashchange", () => { const target = parseHash(); if (target && state.token && (target.view !== state.view)) showView(target.view, target.id); });
-    window.addEventListener("resize", () => { if (state.view === "runs" && state.samples.length) renderTimeline(); if (state.view === "overview") renderTrend(); });
+    window.addEventListener("resize", () => { if (state.view === "runs" && state.samples.length) renderTimeline(); if (state.view === "overview") renderTrend(); if (state.view === "planning" && state.coverage) renderCoverage(state.coverage); });
     const initial = parseHash();
     if (initial) state.view = initial.view;
     if (state.token) connect(); else showView(state.view, initial ? initial.id : null);

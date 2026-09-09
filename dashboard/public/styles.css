@@ -164,3 +164,26 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .pill.online::before { background: var(--status-good); }
 .pill.stale::before { background: var(--status-warning); }
 .pill.offline::before { background: var(--text-muted); }
+
+/* Coverage matrix and the dataset / compute budget planner. */
+.pill.covered::before { background: var(--status-good); }
+.pill.thin::before { background: var(--status-warning); }
+.pill.gap::before { background: var(--status-critical); }
+.matrix-wrap { overflow-x: auto; }
+.matrix { min-width: 420px; }
+.matrix th[scope="row"] { text-align: left; white-space: nowrap; color: var(--text-secondary); font-weight: 500; }
+.matrix td.cell { text-align: center; border-left: 1px solid var(--border); }
+.matrix td.cell b { display: block; font-size: 16px; font-variant-numeric: tabular-nums; }
+.matrix td.cell small { color: var(--text-muted); font-size: 11px; }
+.matrix td.covered { background: color-mix(in srgb, var(--status-good) 16%, transparent); }
+.matrix td.thin { background: color-mix(in srgb, var(--status-warning) 20%, transparent); }
+.matrix td.gap { background: color-mix(in srgb, var(--status-critical) 14%, transparent); }
+.planner { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 10px 14px; margin-bottom: 14px; }
+.planner label { display: flex; flex-direction: column; gap: 4px; color: var(--text-secondary); font-size: 12px; }
+.planner label.check { flex-direction: row; align-items: center; gap: 6px; align-self: end; padding-bottom: 6px; }
+.planner input, .planner select { width: 100%; }
+.planner label.check input { width: auto; }
+tr.is-total td { font-weight: 600; border-top: 2px solid var(--border); }
+.assumptions { margin: 12px 0 0; padding-left: 18px; color: var(--text-secondary); font-size: 12px; }
+.assumptions li { margin-bottom: 3px; }
+.matrix td.cell.outside { background: transparent; color: var(--text-muted); }

@@ -94,6 +94,8 @@ need a writer token, just not necessarily in an `Authorization` header).
 | `GET /api/kpis` | reader | Live KPI report, edge-case rates and perception benchmark |
 | `GET /api/kpis/history` | reader | Nightly KPI snapshots |
 | `POST /api/kpis/snapshot` | writer | Force a snapshot |
+| `GET /api/coverage` | reader | ODD coverage matrix (visibility × lighting), route-class totals and the cells that are still gaps |
+| `GET /api/plan` | reader | Dataset-scale and GPU-budget plan: scenes still to render, storage and low/mid/high cost bands |
 | `GET /api/runs`, `GET /api/runs/:id` | reader | Run catalog and detail (segments, chunks, event summary, evaluations, driving score) |
 | `POST /api/runs` | writer | Upsert a run manifest |
 | `POST /api/runs/:id/telemetry?seq=N` | writer | Upload a chunk of samples (stored in R2, indexed in D1) |
@@ -166,6 +168,55 @@ events, using the Leaderboard 2.0 coefficients for collisions and
 documented Atlas-specific coefficients for the safety rules that have no
 Leaderboard equivalent (see `dashboard/src/driving_score.ts` and
 `toolkit/bhutan_sim/driving_score.py`, which are kept identical).
+
+## Coverage matrix and compute budget
+
+The **Coverage & compute** tab answers the two questions that come before any
+GPU purchase: what the catalog actually covers, and what closing the gap costs.
+
+**Coverage.** `GET /api/coverage` crosses the scenario library's
+`visibility_class` with its `lighting_class` and counts, per cell, the scenario
+variants, the runs recorded against them and their accepted subset. A cell is
+
+* `covered` — at least `min_runs` accepted runs (default 3, `?min_runs=`),
+* `thin` — variants exist but too few accepted runs,
+* `gap` — nothing in the catalog at all.
+
+Runs with no scenario behind them (materialised fleet tracks, GPX imports) land
+in an `unlabelled` row and column: they are shown so the data is visible, but
+they are not ODD combinations, so they do not count towards `coverage_pct` or
+the gap list. Gaps come back worst first — empty cells before thin ones — which
+is the order to collect or render in. `atlas_coverage_pct`,
+`atlas_coverage_cells_gap` and `atlas_dataset_scenes` are also exported to
+Prometheus, so Grafana can alert when a cell regresses.
+
+**Budget.** `GET /api/plan` costs a target dataset size in three parts:
+rendering the missing scenes in CARLA, storing the result, and training on it.
+Defaults are calibrated from the tenant's own catalog — accepted runs as the
+scene count, mean accepted-run duration as seconds per scene, mean clip size as
+MB per scene — and every one can be overridden with a query parameter
+(`tier`, `scenes`, `have`, `workload`, `gpu`, `interruptible`,
+`seconds_per_scene`, `resolution`, `camera_streams`, `mb_per_scene`, `rate`,
+`storage_rate`, `preprocess_overhead`).
+
+| Dataset tier | Scenes | What it buys |
+|---|---|---|
+| Proof of concept | 1k–10k | The pipeline end to end and a baseline demo |
+| Domain adaptation | 10k–100k | Moving an off-the-shelf model onto Bhutanese roads, signage and traffic mix |
+| Robust across the ODD | 100k+ | Varied weather, lighting, road types and rare events with enough examples per cell |
+
+Every figure is a low/mid/high band, because both marketplace GPU rates and
+pipeline efficiency move by more than 2×. The training model is
+1–10 A100-hours per 1,000 scenes for a fine-tune, 10–50 for a medium job and
+50–200 from scratch, plus 20 % for preprocessing, augmentation and validation;
+other GPUs scale by a throughput factor (an H100 is 2.2× an A100). Rates are
+marketplace on-demand listings (Vast.ai-style), with interruptible instances at
+60 % of on-demand. Storage is video bitrate × seconds × camera streams plus
+10 % for telemetry, labels and manifests — a marketplace instance's default
+~10 GB of disk covers none of it, so volume space is a real line item. The
+model lives in `dashboard/src/dataset_plan.ts` and is unit-tested in
+`dashboard/test/dataset_plan.test.ts`; change the constants there, not the UI,
+when the market moves.
 
 ## KPI definitions
 

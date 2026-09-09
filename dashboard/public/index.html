@@ -24,6 +24,7 @@
       <button class="tab" data-view="evaluations" role="tab">Evaluations</button>
       <button class="tab" data-view="governance" role="tab">Safety &amp; governance</button>
       <button class="tab" data-view="fleet" role="tab">Fleet</button>
+      <button class="tab" data-view="planning" role="tab">Coverage &amp; compute</button>
     </nav>
     <form class="auth" id="auth-form" autocomplete="off">
       <input id="auth-token" type="password" placeholder="API token" aria-label="API token">
@@ -191,6 +192,58 @@
           <div id="fleet-map" class="map" role="img" aria-label="Fleet map"></div>
           <div class="legend" id="fleet-legend"></div>
         </div>
+      </div>
+    </section>
+    <section id="view-planning" class="view" aria-label="Coverage and compute">
+      <div class="section-head">
+        <h1>ODD coverage and compute budget</h1>
+        <p class="muted">Which parts of the operational design domain the catalog actually covers, and what it costs to close the gap: scenes to render, storage, GPU-hours and dollars at marketplace rates. Every figure is a low / mid / high band — GPU listings and pipeline efficiency both move by more than 2×.</p>
+      </div>
+
+      <div class="card">
+        <div class="detail-head">
+          <h2>Coverage matrix <span class="muted">visibility × lighting</span></h2>
+          <div class="detail-actions">
+            <label class="muted">Accepted runs per cell <input id="coverage-min-runs" type="number" min="1" max="50" step="1" value="3"></label>
+            <button id="coverage-refresh">Refresh</button>
+          </div>
+        </div>
+        <div id="coverage-summary" class="score-strip"></div>
+        <div id="coverage-matrix" class="matrix-wrap"></div>
+        <div class="legend" id="coverage-legend">
+          <span style="--c:var(--status-good)">covered</span><span style="--c:var(--status-warning)">thin — variants exist, too few accepted runs</span><span style="--c:var(--status-critical)">gap — nothing in the catalog</span>
+        </div>
+      </div>
+
+      <div class="two-col">
+        <div class="card">
+          <h2>Coverage by route class <span class="muted">scenario variants and runs</span></h2>
+          <div id="coverage-route-chart" class="chart"></div>
+        </div>
+        <div class="card">
+          <h2>Biggest gaps <span class="muted">cells to collect or render next</span></h2>
+          <table id="coverage-gaps" class="data-table"><thead><tr><th>Visibility</th><th>Lighting</th><th class="num">Variants</th><th class="num">Runs</th><th>Status</th></tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="detail-head">
+          <h2>Dataset and GPU budget planner</h2>
+          <div class="detail-actions"><span class="muted" id="plan-basis"></span></div>
+        </div>
+        <div class="planner">
+          <label>Target <select id="plan-tier"></select></label>
+          <label>Scenes <input id="plan-scenes" type="number" min="1" step="1000"></label>
+          <label>Workload <select id="plan-workload"></select></label>
+          <label>GPU <select id="plan-gpu"></select></label>
+          <label>Seconds / scene <input id="plan-seconds" type="number" min="1" max="3600" step="1"></label>
+          <label>Capture <select id="plan-resolution"></select></label>
+          <label>Camera streams <input id="plan-streams" type="number" min="1" max="12" step="1" value="1"></label>
+          <label class="check"><input id="plan-interruptible" type="checkbox"> interruptible instances</label>
+        </div>
+        <div id="plan-cards" class="kpi-grid"></div>
+        <table id="plan-table" class="data-table"><thead><tr><th>Line item</th><th class="num">Low</th><th class="num">Mid</th><th class="num">High</th><th>Basis</th></tr></thead><tbody></tbody></table>
+        <ul id="plan-assumptions" class="assumptions"></ul>
       </div>
     </section>
   </main>

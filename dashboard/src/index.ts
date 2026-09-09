@@ -9,6 +9,7 @@ import { createEvaluation, getEvaluation, listEvaluations, markReplayVerified } 
 import { getClipObject, listClips, putClipObject, registerClip, updateClipGovernance } from "./routes/clips";
 import { getKpiHistory, getKpis, getMetrics, getOpenApi, listAudit, postKpiSnapshot } from "./routes/kpis";
 import { runEvidence } from "./routes/evidence";
+import { getCoverage, getPlan } from "./routes/plan";
 import { exportRun, exportScenarioXosc } from "./routes/exports";
 import { deviceTrack, ingestOsmAnd, ingestTraccar, listFleet, materializeTrack, postPositions } from "./routes/fleet";
 
@@ -18,6 +19,8 @@ const router = new Router()
   .get("/api/metrics", getMetrics)
   .get("/api/kpis", getKpis)
   .get("/api/kpis/history", getKpiHistory)
+  .get("/api/coverage", getCoverage)
+  .get("/api/plan", getPlan)
   .post("/api/kpis/snapshot", postKpiSnapshot)
   .get("/api/runs", listRuns)
   .post("/api/runs", createRun)

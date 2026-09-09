@@ -127,7 +127,7 @@ The fine-grained, actionable list (with target files and upstream tools) is main
 - [x] Clip governance: review, release and audit workflow in the dashboard
 - [ ] CVAT / Label Studio round-trip: push released clips as labeling tasks, import labels as ground truth
 - [ ] FiftyOne dataset export for coverage and duplicate analysis
-- [ ] Coverage matrix: scenarios and runs by weather × lighting × route class with gaps highlighted
+- [x] Coverage matrix: scenarios and runs by visibility × lighting, gaps ranked worst first, with route-class totals
 - [ ] Edge-case discovery dashboard: events per 100 km by class, trending
 - [ ] Declarative quality suites (Great Expectations / pandera) exported from the Q-gates
 - [ ] Local labeling-workforce workflow (Phase 2)
@@ -137,6 +137,7 @@ The fine-grained, actionable list (with target files and upstream tools) is main
 - [x] Cloudflare Workers app: runs, scenarios, evaluations, clips, KPI trends, fleet map, audit log
 - [x] Signed (HMAC) evidence-pack exports; GeoJSON/CSV/MCAP export; "Open in Foxglove"
 - [x] Prometheus `/api/metrics` for Grafana alerting; OpenAPI spec for partner clients
+- [x] Coverage & compute tab: ODD coverage matrix and a dataset/GPU budget planner (scenes, storage, GPU-hours, cost bands)
 - [x] Multi-tenant token auth with roles; nightly KPI snapshots via cron
 - [ ] deck.gl route playback with synchronized video/telemetry/event timeline
 - [ ] Clip player with event markers
