@@ -784,7 +784,7 @@
   async function showView(view, id) {
     state.view = view;
     setHash(view, id);
-    document.querySelectorAll(".tab").forEach((t) => t.classList.toggle("is-active", t.dataset.view === view));
+    document.querySelectorAll(".tab[data-view]").forEach((t) => t.classList.toggle("is-active", t.dataset.view === view));
     document.querySelectorAll(".view").forEach((v) => v.classList.toggle("is-active", v.id === "view-" + view));
     if (view !== "fleet") clearTimeout(state.fleet.timer);
     if (view !== "scenes" && window.AtlasScenes) window.AtlasScenes.dispose();
@@ -822,7 +822,7 @@
   }
 
   document.addEventListener("DOMContentLoaded", () => {
-    document.querySelectorAll(".tab").forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
+    document.querySelectorAll(".tab[data-view]").forEach((t) => t.addEventListener("click", () => showView(t.dataset.view)));
     if (window.AtlasScenes) window.AtlasScenes.wire();
     $("#auth-form").addEventListener("submit", (ev) => { ev.preventDefault(); connect(); });
     $("#auth-token").value = state.token;

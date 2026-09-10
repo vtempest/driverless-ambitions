@@ -37,6 +37,7 @@ component together.
 | [`dashboard/`](dashboard) | **The main app.** "Atlas" operations dashboard and evaluation API on Cloudflare Workers: D1 metadata catalog, R2 raw storage, route playback, KPI dashboard, fleet map, safety review, clip governance, signed evidence exports, dataset/compute planner, Prometheus metrics, OpenAPI. |
 | [`toolkit/`](toolkit) | Python package `bhutan_sim`: scenario taxonomy and 100+ parameterized templates, CARLA scenario runner, unified telemetry schema, safety rules, quality gates, perception benchmark, driving score, OpenSCENARIO export, GPX/MCAP/Traccar adapters, upload/seed scripts. |
 | [`carla/`](carla) | The [CARLA](http://carla.org) open-source driving simulator (Unreal Engine 5.5, `ue5-dev`), vendored as the synthetic-world engine. Build and use it exactly as upstream — see [`carla/README.md`](carla/README.md). |
+| [`streetscape/`](streetscape) | [streetscape.gl](https://github.com/aurora-opensource/streetscape.gl), Aurora's deck.gl viewer for [XVIZ](https://github.com/aurora-opensource/xviz) autonomy logs, vendored as the synthetic-world viewer. Upstream is archived; [`streetscape/VENDORED.md`](streetscape/VENDORED.md) records the commit and our patches. The dashboard builds it into the log viewer at `/viewer/`. |
 | [`docs/`](docs) | Platform documentation: [pilot overview](docs/bhutan_pilot.md), [dashboard guide](docs/bhutan_dashboard.md), [fleet tooling survey](docs/bhutan_fleet_tools.md), [detailed roadmap](docs/bhutan_roadmap.md). |
 | [`.github/`](.github) | CI: dashboard/toolkit tests and Cloudflare deploy; CARLA UE5 build pipelines (scoped to `carla/**`). |
 
@@ -48,7 +49,7 @@ component together.
 | **Compass02 · Evaluation** | Scenario scoring, perception metrics, intervention/event analysis, risk rules | `toolkit/bhutan_sim/evaluation.py`, `safety_rules.py`, `driving_score.py` | Model-evaluation and safety-evidence SaaS/API |
 | **Tidewater03 · Synthetic World** | CARLA scenarios, route reconstruction, weather and traffic variation, counterfactual replay | `carla/`, `toolkit/bhutan_sim/scenario.py`, `library.py`, `runner.py`, `openscenario.py` | Synthetic-data generation and simulation platform |
 | **Horizon Sense04 · Perception QA** | Annotation, sensor-fusion benchmark, coverage analysis, edge-case review | `toolkit/bhutan_sim/quality.py`, `evaluation.py`, clip review in the dashboard | Dataset QA, labeling, perception-validation service |
-| **Atlas05 · Operations** | Route dashboard, playback, approvals, safety workflows, evidence exports | `dashboard/` | Fleet, city, insurer and regulator portal |
+| **Atlas05 · Operations** | Route dashboard, XVIZ log playback, approvals, safety workflows, evidence exports | `dashboard/`, `streetscape/` | Fleet, city, insurer and regulator portal |
 
 ## Quick start
 
@@ -59,10 +60,16 @@ cd dashboard
 npm install
 cp .dev.vars.example .dev.vars
 npm run db:migrate:local
+npm run build:viewer                          # streetscape.gl XVIZ viewer → /viewer/
 npm run dev                                   # http://127.0.0.1:8787
 (cd ../toolkit && python scripts/seed_demo.py)  # seed demo data, no CARLA needed
 npm run check                                 # typecheck + unit tests
 ```
+
+The **Demo scenes** tab and the **XVIZ viewer** at
+[`/viewer/`](http://127.0.0.1:8787/viewer/) both work on an empty database
+without a token: their scenes are generated from a fixed seed, so a fresh
+deployment has something to play immediately.
 
 **Toolkit (scenarios, evaluation, ingestion — no CARLA server required except `run_scenario.py`):**
 
@@ -140,6 +147,8 @@ The fine-grained, actionable list (with target files and upstream tools) is main
 - [x] Multi-tenant token auth with roles; nightly KPI snapshots via cron
 - [x] Dataset and compute planner: corpus size, storage and marketplace GPU cost bands for a training program, measured against the catalog's coverage
 - [ ] Live marketplace GPU prices and saved plans, so a budget line is quoted rather than estimated
+- [x] streetscape.gl/XVIZ log viewer at `/viewer/`: ego pose and mesh, simulated lidar, actor boxes with ranges, road geometry, planned trajectory, synchronized metric charts and a scene-event table
+- [x] XVIZ v2 served from Workers — cached per-frame files and a `WebSocketPair` stream, so both of streetscape.gl's loaders work against the same origin
 - [ ] deck.gl route playback with synchronized video/telemetry/event timeline
 - [ ] Clip player with event markers
 - [ ] Partner report page: printable Month-3 evidence summary for fleets, insurers, regulators

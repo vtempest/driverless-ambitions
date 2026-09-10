@@ -27,8 +27,12 @@ timeline, scenario library, evaluations, safety review and governance).
 | Signing | Worker secret + WebCrypto | HMAC-SHA256 signature on evidence packs |
 
 The Worker is dependency-free TypeScript (no framework) so it stays small and
-auditable. The front end is plain HTML, CSS and JavaScript with deck.gl loaded
-from a CDN; there is no build step.
+auditable — including the XVIZ encoder, which writes the protocol directly
+rather than pulling `@xviz/builder` into the isolate. The dashboard front end is
+plain HTML, CSS and JavaScript with deck.gl from a CDN and no build step. The
+one exception is the XVIZ viewer at `/viewer/`, a React app built by Vite from
+the vendored [`streetscape/`](../streetscape) source into `dashboard/public/viewer/`,
+which the same Worker then serves as a static asset.
 
 ## Deploy
 
@@ -62,8 +66,12 @@ cd dashboard
 npm install
 cp .dev.vars.example .dev.vars           # local tokens and signing key
 npm run db:migrate:local
+npm run build:viewer                     # streetscape.gl viewer → /viewer/
 npm run dev                              # http://127.0.0.1:8787
 ```
+
+`npm run dev:viewer` runs the XVIZ viewer under Vite with hot reload instead,
+proxying `/api` (WebSocket included) to `wrangler dev` on port 8787.
 
 Then, from `toolkit`, `python scripts/seed_demo.py` fills the local
 instance with the scenario library, three synthetic switchback runs (clearly
@@ -98,6 +106,10 @@ need a writer token, just not necessarily in an `Authorization` header).
 | `GET`/`POST /api/planner` | reader | Dataset size, storage and GPU-cost plan for a target corpus, plus the catalog's coverage against it |
 | `GET /api/coverage` | reader | ODD coverage matrix (visibility x lighting) with gaps worst first |
 | `GET /api/scenes`, `GET /api/scenes/:id` | none | Synthetic demo scenes for the scene viewer |
+| `GET /api/xviz/logs` | none | The demo scenes as XVIZ v2 logs, with the URLs each streetscape.gl loader needs |
+| `GET /api/xviz/logs/:id/:file` | none | XVIZ file loader: `0-frame.json` timings, `1-frame.json` metadata, `n-frame.json` data frame `n - 2` |
+| `GET /api/xviz/logs/:id/lidar-:density/:file` | none | The same frames at a chosen point-cloud density, `0` to `1` |
+| `GET /api/xviz/ws?log=:id` | none | XVIZ v2 WebSocket stream for `XVIZStreamLoader` |
 | `GET /api/runs`, `GET /api/runs/:id` | reader | Run catalog and detail (segments, chunks, event summary, evaluations, driving score) |
 | `POST /api/runs` | writer | Upsert a run manifest |
 | `POST /api/runs/:id/telemetry?seq=N` | writer | Upload a chunk of samples (stored in R2, indexed in D1) |
@@ -265,6 +277,68 @@ the nearest of the ground plane, an actor or a verge post. That keeps a scene
 around 70 kB and makes the scan respond to the sensor model — an actor beyond
 the scene's usable lidar range is drawn as *not detected*, which is what makes
 the fog and rain scenes look visibly different from the clear ones.
+
+## XVIZ logs and the streetscape.gl viewer
+
+The same four scenes are also published as [XVIZ](https://github.com/aurora-opensource/xviz)
+v2 logs and played by [streetscape.gl](https://github.com/aurora-opensource/streetscape.gl),
+Aurora's autonomy-log viewer, at `/viewer/`. Upstream is archived, so it is
+vendored at [`streetscape/`](../streetscape) and built from source — see
+[`streetscape/VENDORED.md`](../streetscape/VENDORED.md).
+
+This is the same data through an industry-standard lens. Where the Demo scenes
+tab is our own deck.gl view of our own JSON, XVIZ is the format AV teams already
+have tooling for, so a partner can point their own viewer at these URLs, and the
+scenario library gains an export path that is not specific to this dashboard.
+
+### Streams
+
+| Stream | Category | What it carries |
+|---|---|---|
+| `/vehicle_pose` | pose | Ego position in metres from the scene origin, plus heading. Anchors every other stream. |
+| `/lidar/points` | primitive · point | Simulated returns, coloured carriageway / verge / object |
+| `/object/shape` | primitive · polygon | Actor footprints, extruded to actor height |
+| `/object/tracked_point`, `/object/label` | primitive · circle, text | Actor centres and `id + range` labels |
+| `/road/carriageway`, `/road/centerline` | primitive · polygon, polyline | Road geometry |
+| `/ego/trajectory`, `/ego/trail` | primitive · polyline | Six seconds ahead, eight seconds behind |
+| `/vehicle/velocity`, `/vehicle/acceleration` | time series | Speed and its central difference; drives the HUD gauges |
+| `/perception/nearest_object`, `/perception/nearest_vru`, `/perception/tracked_objects` | time series | Range to the nearest actor and nearest vulnerable road user, and how many are inside the sensor envelope |
+| `/vehicle/turn_signal` | time series | Derived from the ego's own yaw rate a second ahead |
+| `/scene/events` | UI primitive | The scene's event list, filling as playback reaches each one |
+
+Actors outside the scene's usable lidar range carry the `missed` style class and
+are drawn as flat grey ghosts labelled *not detected* — the same sensor-model
+claim the Demo scenes tab makes, expressed in XVIZ styling.
+
+### Transports
+
+Both of streetscape.gl's loaders are served, with byte-identical frames:
+
+* **Files.** `GET /api/xviz/logs/:id/0-frame.json` is the timings index,
+  `1-frame.json` the metadata, and `n-frame.json` for `n >= 2` is data frame
+  `n - 2` — the numbering `XVIZFileLoader` expects. Every frame is a pure
+  function of the seed, so all of them are served `immutable` and a replay comes
+  from the edge cache rather than the Worker.
+* **WebSocket.** `GET /api/xviz/ws?log=:id` upgrades through a `WebSocketPair`
+  and speaks XVIZ v2: metadata on connect, then a `state_update` per frame for
+  each `transform_log` range the client asks for, ending in
+  `transform_log_done`. A new request supersedes whatever is still in flight, so
+  seeking does not interleave two streams. No Durable Object is involved —
+  frames are generated from a seed, so there is no state to hold.
+
+### Lidar density
+
+Every return is JSON on the wire here, so the density is a path segment:
+`/api/xviz/logs/:id/lidar-<n>/<file>` for `n` in `[0, 1]`, defaulting to 0.35 —
+roughly 10 kB gzipped per frame. `lidar-1` sends the full modelled scan;
+`lidar-0` omits the point cloud. It is a path segment rather than a query
+parameter because `XVIZFileLoader` picks its parser from the end of the URL
+string, and anything after `.json` makes the frame an "unknown file format".
+
+`dashboard/src/lidar.ts` is a TypeScript port of the ray caster in
+`public/scenes.js`: the browser viewer simulates its own scan, the XVIZ log's
+has to be built on the server. `test/lidar.test.ts` loads the browser copy in a
+sandbox and asserts the two produce the identical scan, so they cannot drift.
 
 ## KPI definitions
 

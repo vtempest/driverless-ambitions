@@ -12,6 +12,7 @@ cp .dev.vars.example .dev.vars
 npm run db:migrate:local
 npm run dev                                  # http://127.0.0.1:8787
 (cd ../toolkit && python scripts/seed_demo.py)   # demo data
+npm run build:viewer                         # the XVIZ viewer at /viewer/
 npm run typecheck
 npm test                                     # node:test unit tests
 ```
@@ -41,6 +42,16 @@ Beyond the run/scenario/evaluation/clip API, the Worker also exposes:
   events, and sits in an ODD cell the coverage matrix reports as a gap. The
   lidar is not shipped — the viewer simulates the returns in the browser by
   casting rays against the same geometry, so a scene stays around 70 kB.
+* `GET /api/xviz/logs`, `/api/xviz/logs/:id/…`, `/api/xviz/ws` — the same demo
+  scenes encoded as [XVIZ](https://github.com/aurora-opensource/xviz) v2 logs
+  for [streetscape.gl](https://github.com/aurora-opensource/streetscape.gl),
+  which this repository vendors at [`../streetscape`](../streetscape) and builds
+  into the viewer at `/viewer/`. Frames are generated one per request from the
+  same seed, so they are pure and served `immutable`; the lidar is simulated on
+  the Worker this time, by `src/lidar.ts`, because XVIZ frames come from the
+  server. Both of streetscape.gl's loaders are supported: cached files, and a
+  WebSocket stream answered from a `WebSocketPair` — the shape a live vehicle
+  feed would take. See [`viewer/README.md`](viewer/README.md).
 * `GET /api/metrics` — Prometheus exposition for Grafana.
 * `GET /api/openapi.json` — OpenAPI 3.1 description of the whole API.
 * A [CARLA Leaderboard](https://github.com/carla-simulator/leaderboard)-style
@@ -54,5 +65,9 @@ npx wrangler r2 bucket create carla-bhutan-atlas-data
 npm run db:migrate:remote
 npx wrangler secret put API_TOKENS           # token=tenant:role;...
 npx wrangler secret put MANIFEST_SIGNING_KEY
-npm run deploy
+npm run deploy                               # builds viewer/, then deploys
 ```
+
+`npm run deploy` builds the XVIZ viewer into `public/viewer/` first, because
+`wrangler deploy` uploads `public/` as the Worker's static assets. That
+directory is generated and is not checked in.

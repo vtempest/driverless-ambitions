@@ -1,0 +1,54 @@
+@import 'theme';
+
+body {
+  user-select: none;
+  background: #000;
+  font-family: $font-family;
+  font-weight: 200;
+  font-size: 14px;
+  line-height: 24px;
+}
+
+#container {
+  position: fixed;
+  top: 0;
+  left: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow:hidden;
+}
+#control-panel {
+  position: fixed;
+  width: 348px;
+  height: calc(100vh - 150px);
+  border-bottom: solid 1px #000;
+}
+#timeline {
+  position: fixed;
+  left: 348px;
+  right: 0;
+  bottom: 0;
+  border-left: solid 1px #000;
+}
+#hud {
+  position: fixed;
+  width: 348px;
+  height: 149px;
+  left: 0;
+  bottom: 0;
+}
+#toolbar {
+  position: fixed;
+  top: calc(50vh - 74px);
+  right: 0;
+  transform: translateY(-50%);
+}
+.mapboxgl-ctrl-logo {
+  margin-left: 350px !important;
+  margin-bottom: 2px !important;
+  opacity: 0.4;
+}
+
+@import 'control-panel';
+@import 'toolbar';
+@import 'hud';
