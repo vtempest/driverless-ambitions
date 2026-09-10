@@ -5,7 +5,9 @@
   "description": "Operations dashboard and evaluation API for the Bhutan mobility-data pilot, hosted on Cloudflare Workers",
   "scripts": {
     "dev": "wrangler dev",
-    "deploy": "wrangler deploy",
+    "dev:viewer": "npm --prefix viewer run dev",
+    "deploy": "npm run build:viewer && wrangler deploy",
+    "build:viewer": "npm --prefix viewer ci && npm --prefix viewer run build",
     "typecheck": "tsc --noEmit",
     "test": "node --import tsx --test test/*.test.ts",
     "db:migrate:local": "wrangler d1 migrations apply carla-bhutan-atlas --local",

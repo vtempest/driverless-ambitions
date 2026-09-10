@@ -59,6 +59,28 @@ export function openApiDocument(baseUrl: string, appName: string): Record<string
       },
       "/api/scenes": { get: op("Demo scene catalog — synthetic, generated from a fixed seed, no tenant data", "none") },
       "/api/scenes/{id}": { get: op("One demo scene: road geometry, ego and actor tracks, sensor model and events", "none", { parameters: [idParam("id")] }) },
+      "/api/xviz/logs": { get: op("The same demo scenes as XVIZ v2 logs for streetscape.gl, with the URLs each loader needs", "none") },
+      "/api/xviz/logs/{id}/{file}": {
+        get: op(
+          "XVIZ file-loader surface. 0-frame.json is the timings index, 1-frame.json the log metadata, and n-frame.json (n >= 2) is data frame n - 2.",
+          "none",
+          { parameters: [idParam("id"), idParam("file")] },
+        ),
+      },
+      "/api/xviz/logs/{id}/{profile}/{file}": {
+        get: op(
+          "The same frames at a chosen lidar density. `profile` is `lidar-<n>` for n in [0, 1]; 0 omits the point cloud. It is a path segment because XVIZFileLoader reads the file format off the end of the URL.",
+          "none",
+          { parameters: [idParam("id"), idParam("profile"), idParam("file")] },
+        ),
+      },
+      "/api/xviz/ws": {
+        get: op(
+          "XVIZ v2 WebSocket stream for XVIZStreamLoader: metadata on connect, then state_update messages for each transform_log range. Requires an Upgrade: websocket request.",
+          "none",
+          { parameters: [q("log"), q("lidar", { type: "number" })], responses: { "101": { description: "Switching protocols" }, "426": { description: "Not a WebSocket upgrade" } } },
+        ),
+      },
       "/api/runs": { get: op("List runs", "reader", { parameters: [q("source"), q("scenario_id"), q("quality_status"), q("limit", { type: "integer" })] }), post: op("Upsert a run manifest", "writer", { requestBody: jsonBody({ $ref: "#/components/schemas/Run" }) }) },
       "/api/runs/{id}": { get: op("Run detail with segments, chunks, event summary, evaluations and driving score", "reader", { parameters: [idParam("id")] }) },
       "/api/runs/{id}/telemetry": { post: op("Upload a telemetry chunk", "writer", { parameters: [idParam("id"), q("seq", { type: "integer" })], requestBody: jsonBody({ type: "object", properties: { samples: { type: "array", items: { $ref: "#/components/schemas/Sample" } } } }) }), get: op("Downsampled samples for playback", "reader", { parameters: [idParam("id"), q("max", { type: "integer" })] }) },

@@ -3,9 +3,9 @@ name: Bhutan dashboard
 on:
   push:
     branches: [ue5-dev, ue4-dev]
-    paths: ["dashboard/**", "toolkit/**", ".github/workflows/bhutan_dashboard.yml"]
+    paths: ["dashboard/**", "toolkit/**", "streetscape/**", ".github/workflows/bhutan_dashboard.yml"]
   pull_request:
-    paths: ["dashboard/**", "toolkit/**", ".github/workflows/bhutan_dashboard.yml"]
+    paths: ["dashboard/**", "toolkit/**", "streetscape/**", ".github/workflows/bhutan_dashboard.yml"]
   workflow_dispatch:
 
 jobs:
@@ -53,9 +53,26 @@ jobs:
       - run: npm run typecheck
       - run: npm test
 
+  viewer:
+    name: XVIZ viewer build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: dashboard/viewer/package-lock.json
+      # Builds the vendored streetscape.gl source in streetscape/ — the build is
+      # what catches a bad patch there, since that tree has no tests of its own.
+      - run: npm run build:viewer
+
   deploy:
     name: Deploy to Cloudflare
-    needs: [python, worker]
+    needs: [python, worker, viewer]
     if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
     runs-on: ubuntu-latest
     environment: bhutan-dashboard

@@ -14,6 +14,7 @@ import { deviceTrack, ingestOsmAnd, ingestTraccar, listFleet, materializeTrack, 
 import { getPlanner, getPlannerOptions, postPlanner } from "./routes/planner";
 import { getCoverage } from "./routes/coverage";
 import { getScene, getScenes } from "./routes/scenes";
+import { getLogFile, listLogs, xvizSocket } from "./routes/xviz";
 
 const router = new Router()
   .get("/api/health", (c) => json({ ok: true, app: c.env.APP_NAME, time: new Date().toISOString() }))
@@ -28,6 +29,10 @@ const router = new Router()
   .get("/api/coverage", getCoverage)
   .get("/api/scenes", getScenes)
   .get("/api/scenes/:id", getScene)
+  .get("/api/xviz/logs", listLogs)
+  .get("/api/xviz/logs/:id/:file", getLogFile)
+  .get("/api/xviz/logs/:id/:profile/:file", getLogFile)
+  .get("/api/xviz/ws", xvizSocket)
   .get("/api/runs", listRuns)
   .post("/api/runs", createRun)
   .get("/api/runs/:id", getRun)
@@ -85,6 +90,9 @@ export default {
     }
     try {
       const response = await match.handler({ request, env, ctx, params: match.params, url });
+      // A WebSocket upgrade carries its peer on the response object itself, and
+      // that handle is lost by re-wrapping. Hand it back exactly as it came.
+      if (response.status === 101) return response;
       const headers = new Headers(response.headers);
       for (const [k, v] of Object.entries(CORS_HEADERS)) headers.set(k, v);
       headers.set("x-content-type-options", "nosniff");

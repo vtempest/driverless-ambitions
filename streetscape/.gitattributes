@@ -1,0 +1,12 @@
+dist/** -diff
+dist-demo/** -diff
+yarn.lock -diff
+
+*.eot -diff
+*.svg -diff
+*.ttf -diff
+*.woff -diff
+
+*.png -diff
+
+website/streetscape.gl.json -diff
