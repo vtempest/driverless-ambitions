@@ -30,6 +30,7 @@ Legend: `[x]` shipped, `[ ]` open. Items are ordered by value to the pilot.
 | [x] | **kepler.gl / QGIS** ([keplergl/kepler.gl](https://github.com/keplergl/kepler.gl), [qgis/QGIS](https://github.com/qgis/QGIS)) | GeoJSON and CSV export of routes and events for GIS risk overlays | `dashboard/src/exports.ts` |
 | [x] | **GPX dashcam / phone logs** (gpxpy-compatible) | Convert GPX tracks from dashcams and phone loggers into the unified timeline | `bhutan_sim/adapters/gpx.py`, `scripts/convert_run.py` |
 | [x] | **OpenAPI / Swagger UI** ([swagger-api/swagger-ui](https://github.com/swagger-api/swagger-ui)) | `/api/openapi.json` describes every endpoint for client generation and partner docs | `dashboard/src/openapi.ts` |
+| [x] | **Vast.ai / RunPod marketplaces** ([vast-ai/vast-python](https://github.com/vast-ai/vast-python), [runpod/runpod-python](https://github.com/runpod/runpod-python)) | Nightly poll of both public listing APIs; per-card median, p25, cheapest and interruptible $/GPU-hour stored in D1 and used to price every plan | `dashboard/src/gpu_prices.ts`, `dashboard/src/routes/gpu_prices.ts` |
 | [ ] | **Scenic** ([BerkeleyLearnVerify/Scenic](https://github.com/BerkeleyLearnVerify/Scenic)) | Generate a Scenic program per family for probabilistic coverage sampling; import sampled scenes as templates | `bhutan_sim/scenic_export.py` |
 | [ ] | **openpilot / comma logs** ([commaai/openpilot](https://github.com/commaai/openpilot)) | Read-only rlog ingestion (GPS, IMU, CAN speed/brake) into the timeline via `openpilot-tools` | `bhutan_sim/adapters/openpilot.py` |
 | [ ] | **cantools / can-utils** ([cantools/cantools](https://github.com/cantools/cantools)) | Decode J1939 candump logs with a DBC into `throttle`, `brake`, `speed_mps`, payload signals | `bhutan_sim/adapters/can_dbc.py` |
@@ -66,13 +67,19 @@ answer. `[x]` means the survey is written up and the verdict is recorded here.
 **Dataset packaging and training pipeline**
 
 - [ ] [webdataset/webdataset](https://github.com/webdataset/webdataset) and [mosaicml/streaming](https://github.com/mosaicml/streaming) — shard formats that stream from R2 to a rented GPU without a full local copy; directly cuts the disk line in the planner's budget.
-- [ ] [skypilot-org/skypilot](https://github.com/skypilot-org/skypilot) — launches checkpointed jobs on the cheapest available (including interruptible) GPUs across clouds and marketplaces. The natural executor for a plan the dashboard produces.
-- [ ] [vast-ai/vast-python](https://github.com/vast-ai/vast-python) — the marketplace's own CLI/API; the source for live $/hour instead of the planner's static reference rates.
+- [ ] [skypilot-org/skypilot](https://github.com/skypilot-org/skypilot) — launches checkpointed jobs on the cheapest available (including interruptible) GPUs across clouds and marketplaces. The natural executor for a plan the dashboard produces, and now that `/api/gpu-prices` knows which marketplace is cheapest, the plan can name the target.
+- [x] [vast-ai/vast-python](https://github.com/vast-ai/vast-python) — the marketplace's own CLI/API. **Verdict: the API earns its place, the package does not.** The bundle search (`GET /api/v0/bundles/?q=…`) is public, returns every field the planner needs (`dph_total`, `num_gpus`, `gpu_name`, `gpu_ram`, `min_bid`, `storage_cost`, `reliability2`) and is a single HTTP call, so the Worker talks to it directly rather than shipping a Python CLI into an edge runtime. Landed in Iteration 4.
+- [ ] [runpod/runpod-python](https://github.com/runpod/runpod-python) and [RunPod's GraphQL catalogue](https://api.runpod.io/graphql) — the second source already polled for prices. Question: whether the serverless endpoint API is a cheaper executor than a rented instance for short, bursty evaluation jobs.
 - [ ] [ray-project/ray](https://github.com/ray-project/ray), [mlflow/mlflow](https://github.com/mlflow/mlflow), [aimhubio/aim](https://github.com/aimhubio/aim) — job orchestration and run tracking, so planned GPU-hours can be compared against actual ones.
+- [ ] [Lambda Labs](https://cloud.lambdalabs.com/api/v1/docs), [TensorDock](https://documenter.getpostman.com/view/20973002/2s8YzMYRDc) and [Hyperstack](https://infrahub-doc.nexgencloud.com/) public price APIs — three more listing sources for the same quote table; each is one parser in `gpu_prices.ts`. Question: which of them publish prices without an account, since that is what keeps the price refresh working on a fresh deployment.
+- [ ] [Genesis-Embodied-AI/Genesis](https://github.com/Genesis-Embodied-AI/Genesis) — GPU-parallel physics with very high step throughput. Question: whether scenario batches that today cost CARLA-hours can be generated in minutes for the behaviour-cloning half of the corpus.
 
 **Data and visualisation**
 
 - [ ] [rerun-io/rerun](https://github.com/rerun-io/rerun) — an embeddable viewer next to the Foxglove deep link; worth it if `.rrd` export is cheap from the same sample stream.
+- [ ] [duckdb/duckdb-wasm](https://github.com/duckdb/duckdb-wasm) — ad-hoc SQL over a Parquet export of the catalog, in the browser. Question: whether it removes the need for a paginated search API on runs and events, or just moves the problem.
+- [ ] [OpenDriveLab/DriveArena](https://github.com/OpenDriveLab/DriveArena) — closed-loop generative driving simulator. Question: whether a generated world can host the same scenario templates the library already exports as OpenSCENARIO.
+- [ ] [huggingface/lerobot](https://github.com/huggingface/lerobot) — an episode/dataset layout with a live viewer and Hub hosting. Question: whether its episode format is a better release container for clips than a bare WebDataset shard.
 - [ ] [argoverse/av2-api](https://github.com/argoverse/av2-api), [waymo-research/waymo-open-dataset](https://github.com/waymo-research/waymo-open-dataset), [zenseact/zod](https://github.com/zenseact/zod) — public corpora to pretrain on before Bhutan fine-tuning, and label schemas worth matching.
 - [ ] [facebookresearch/EgoBlur](https://github.com/facebookresearch/EgoBlur) — face/plate redaction; the concrete candidate for the pipeline's redaction step.
 
@@ -87,8 +94,13 @@ answer. `[x]` means the survey is written up and the verdict is recorded here.
 - [x] Planner tab: dataset size, storage and GPU-cost bands for a target corpus, measured against what the catalog already holds (`/api/planner`).
 - [x] Demo scenes tab: seeded synthetic scenes rendered in deck.gl with a browser-side lidar simulation, served unauthenticated so a fresh deployment has something to show (`/api/scenes`).
 - [ ] Run comparison: overlay two runs' timelines and event markers.
-- [ ] Live GPU prices in the planner: poll the Vast.ai (and RunPod) listing API on the cron trigger, cache in D1, and replace the static reference rates with a real quote plus a price sparkline.
+- [x] Live GPU prices in the planner: poll the Vast.ai and RunPod listing APIs on the cron trigger, store per-card quotes in D1, price plans at the cheapest fresh median and chart the price history (`/api/gpu-prices`).
 - [ ] Saved plans: name a plan, store it, and diff two plans (target size, GPU, cost) so a budget change is reviewable.
+- [ ] Price alerts: a threshold per card on the stored price history, and a webhook when the median crosses it — the point of a nightly price series is to buy at the bottom of it.
+- [ ] Disk-aware and reliability-aware quotes: filter listings to hosts whose disk fits the plan's `total_gb` and whose reliability clears a floor, so the quoted median is a machine that can actually hold the corpus.
+- [ ] Spot break-even: how much checkpoint/restart overhead an interruptible instance can absorb before it costs more than on-demand, from the two live rates.
+- [ ] Cheapest-window hint: hour-of-day and day-of-week medians from the price history, so a long run is launched when the market is soft.
+- [ ] Region and marketplace recommendation on a plan: which source to launch on, with the second-cheapest as a fallback.
 - [ ] Budget export: the planner's numbers as CSV and as a printable Markdown/PDF section of the partner report.
 - [ ] Training-run registry: register an actual training job (dataset snapshot hash, GPU, hours, spend) and show planned versus actual next to the model's evaluation rows.
 - [ ] Cost KPIs: dollars per accepted hour, per released clip and per discovered edge case, on the Overview tab.
@@ -121,6 +133,8 @@ answer. `[x]` means the survey is written up and the verdict is recorded here.
 
 - [x] Worker unit tests (`npm test`) for router, auth, exports, OpenSCENARIO, driving score and metrics.
 - [x] D1 migration `0002_fleet_and_scores.sql`.
+- [x] D1 migration `0003_gpu_prices.sql` (marketplace price samples, not tenant-scoped).
+- [ ] Retention for `gpu_price_samples`: keep daily samples for a year, thin the rest, so the price history does not grow without bound.
 - [ ] Vitest with `@cloudflare/vitest-pool-workers` for end-to-end route tests against Miniflare.
 - [ ] Cloudflare Access / SSO in front of the dashboard; keep bearer tokens for machine clients.
 - [ ] Key rotation for `MANIFEST_SIGNING_KEY` with multiple `key_id`s.
@@ -131,6 +145,57 @@ answer. `[x]` means the survey is written up and the verdict is recorded here.
 
 This roadmap is worked one feature per iteration: each pass picks the highest-value
 open item above, ships it with tests, ticks the box and adds a line here. Newest first.
+
+### Iteration 4 — live marketplace GPU prices
+
+The planner's weakest number was its price: a static table said an A100 80GB costs
+$1.15/hour and an H100 $1.80, while the marketplaces move those figures daily and
+third-party trackers were already quoting H100s at $1.60–$2.00. A budget built on
+a number nobody can rent is not a budget. This iteration replaces the table with
+today's listings and keeps the table as the fallback.
+
+* `dashboard/src/gpu_prices.ts` — pure: source definitions, parsers and the
+  aggregation. Vast.ai's public bundle search and RunPod's public GPU catalogue
+  are both read without a key, which matters because it means price refresh works
+  on a fresh deployment. Every listing is normalised to a **per-GPU** hourly rate
+  (Vast quotes `dph_total` for the whole machine), cards are matched by name with a
+  memory floor so an A100 40GB never prices an 80GB plan, and each (source, card)
+  becomes one quote: median, 25th percentile, cheapest, median interruptible bid
+  and median disk rent.
+* The **median**, not the minimum, is what a plan is priced at. The cheapest
+  listing for a card is usually a single host with poor reliability or a disk too
+  small for the corpus; the minimum and p25 are carried alongside so the spread
+  stays visible instead of being hidden behind one optimistic number.
+* `ratesFromQuotes` picks the cheapest *fresh* median across sources — the decision
+  a buyer actually makes — and drops anything older than 48 hours rather than
+  ageing it into the answer: a two-day-old median is a worse estimate than a
+  documented reference point, because it looks live.
+* `dashboard/src/routes/gpu_prices.ts` + `migrations/0003_gpu_prices.sql` — one
+  sample per source and card per night, written by the cron trigger next to the KPI
+  snapshot. The table is deliberately not tenant-scoped: a listing is public market
+  data, identical for every tenant, and the history is more useful the denser it is.
+  `GET /api/gpu-prices` needs no token for the same reason `/api/scenes` does not.
+* `planner.ts` gained `priceFor`, which resolves a rate in the order a buyer trusts
+  them — a rate you were quoted (`usd_per_gpu_hour`), then today's market, then the
+  reference table — and reports which it used on every plan and every row of the
+  GPU comparison. `live_prices=false` pins a plan to the reference table so two
+  plans made a week apart stay comparable. A missing price table or a failed
+  refresh silently falls back; nothing about the planner requires the network.
+* Front end: a price-source badge on the compute-cost tile, a quotes table with the
+  spread and the drift against the reference rate, a 60-day price history chart,
+  and a Refresh quotes button for writers.
+* Tests: 8 over parsing, aggregation, freshness and plan pricing, and 4 over the
+  routes against a D1 stand-in — including that a deployment which has not run
+  migration 0003 still serves a plan.
+
+Not verified from this sandbox: both marketplace hosts are blocked by the network
+policy here, so the parsers were exercised against recorded payloads rather than a
+live response. The first cron run after deployment is the real check — `POST
+/api/gpu-prices/refresh` reports per-source errors rather than hiding them.
+
+Open follow-ups it creates: price alerts on the new history, disk- and
+reliability-aware quotes, a spot break-even, a cheapest-window hint, and a
+retention job for the samples table (all listed above).
 
 ### Iteration 3 — ODD coverage matrix and the demo scene viewer
 

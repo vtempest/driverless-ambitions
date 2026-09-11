@@ -18,7 +18,7 @@
     deck: null,
     history: [],
     fleet: { devices: [], device: null, track: [], deck: null, timer: null },
-    planner: { options: null, plan: null },
+    planner: { options: null, plan: null, prices: null },
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -689,6 +689,7 @@
       else if (value !== null && value !== undefined && $(sel).tagName === "SELECT") $(sel).value = value;
     }
     $("#plan-interruptible").checked = !!options.defaults.interruptible;
+    $("#plan-live-prices").checked = options.defaults.live_prices !== false;
     return options;
   }
 
@@ -699,16 +700,93 @@
       if (value !== "") params.set(key, value);
     }
     if ($("#plan-interruptible").checked) params.set("interruptible", "true");
+    if (!$("#plan-live-prices").checked) params.set("live_prices", "false");
     return params;
   }
 
   async function loadPlanner() {
     await loadPlannerOptions();
     const params = plannerQuery();
-    const plan = await api("/api/planner?" + params.toString());
+    // Prices are market data and need no token, so a failure there must not take
+    // the plan with it — the plan falls back to the reference rates by itself.
+    const [plan, prices] = await Promise.all([
+      api("/api/planner?" + params.toString()),
+      fetch("/api/gpu-prices?days=60").then((r) => (r.ok ? r.json() : null)).catch(() => null),
+    ]);
     state.planner.plan = plan;
+    state.planner.prices = prices;
     setHash("planner", String(plan.input.scenes));
     renderPlan(plan);
+  }
+
+  /** Where the plan's $/GPU-hour came from: a quote, the marketplace, or the table. */
+  function priceBadge(compute) {
+    const source = String(compute.price_source || "reference");
+    if (source === "override") return `${pill("override")} <span class="muted">rate you supplied</span>`;
+    if (source === "reference") return `${pill("reference")} <span class="muted">reference table — no fresh quote</span>`;
+    const market = source.replace("live:", "");
+    const seen = compute.price_observed_at ? new Date(compute.price_observed_at).toLocaleString() : "";
+    return `${pill("live")} <span class="muted">${esc(market)} median of ${compute.price_offers || 0} listing(s), ${esc(seen)}</span>`;
+  }
+
+  function renderPrices(plan) {
+    const prices = state.planner.prices;
+    const container = $("#plan-prices");
+    const chart = $("#plan-price-chart");
+    if (!prices || !prices.quotes || !prices.quotes.length) {
+      container.innerHTML = `<div class="empty">no marketplace samples stored yet — the nightly cron takes one, or press Refresh quotes (writer token)</div>`;
+      chart.innerHTML = "";
+      return;
+    }
+    const label = (id) => (prices.reference.find((r) => r.gpu_id === id) || {}).label || id;
+    const drift = new Map(prices.drift.map((d) => [d.gpu_id, d]));
+    const rows = prices.quotes.slice().sort((a, b) => (a.gpu_id === b.gpu_id ? a.source.localeCompare(b.source) : a.gpu_id.localeCompare(b.gpu_id)));
+    container.innerHTML = `
+      <p class="price-note">${prices.stale ? "Latest sample is older than " + prices.max_age_hours + " h, so plans are priced from the reference table." : "Plans are priced at the cheapest fresh median across sources."} Cards with no listing keep their reference rate.</p>
+      <table class="data-table"><thead><tr><th>GPU</th><th>Source</th><th class="num">Median</th><th class="num">p25</th><th class="num">Cheapest</th><th class="num">Interruptible</th><th class="num">Listings</th><th class="num">vs reference</th></tr></thead><tbody>
+      ${rows.map((q) => {
+        const d = drift.get(q.gpu_id);
+        const used = d && d.source === q.source;
+        const cell = used && d ? `<span class="${d.drift_pct >= 0 ? "drift-up" : "drift-down"}">${d.drift_pct > 0 ? "+" : ""}${fmt.num(d.drift_pct, 1)} %</span>` : "";
+        return `<tr><td>${esc(label(q.gpu_id))}${used ? ' <span class="muted">· used</span>' : ""}</td><td>${esc(q.source)}</td>
+          <td class="num">$${fmt.num(q.usd_per_hour_median, 2)}</td><td class="num">$${fmt.num(q.usd_per_hour_p25, 2)}</td><td class="num">$${fmt.num(q.usd_per_hour_min, 2)}</td>
+          <td class="num">${q.usd_per_hour_interruptible ? "$" + fmt.num(q.usd_per_hour_interruptible, 2) : "–"}</td><td class="num">${q.offers}</td><td class="num">${cell}</td></tr>`;
+      }).join("")}
+      </tbody></table>`;
+
+    // History: one line per card, at the cheapest median seen on each day.
+    const byGpu = new Map();
+    for (const point of prices.history || []) {
+      if (!point.usd_per_hour_median) continue;
+      const day = Math.floor(Date.parse(point.observed_at) / 86400000);
+      if (!Number.isFinite(day)) continue;
+      const days = byGpu.get(point.gpu_id) || new Map();
+      const current = days.get(day);
+      if (current === undefined || point.usd_per_hour_median < current) days.set(day, point.usd_per_hour_median);
+      byGpu.set(point.gpu_id, days);
+    }
+    const series = [];
+    for (const [gpuId, days] of byGpu) {
+      const values = Array.from(days.entries()).sort((a, b) => a[0] - b[0]);
+      if (values.length >= 2) series.push({ gpu: gpuId, name: label(gpuId), values });
+    }
+    if (!series.length) { chart.innerHTML = '<div class="empty">a price line needs samples from at least two days</div>'; return; }
+    const day0 = Math.min(...series.flatMap((s) => s.values.map((v) => v[0])));
+    lineChart(chart, {
+      title: "Cheapest median $/GPU-hour" + (plan ? " · " + plan.compute.gpu : ""),
+      xLabel: " d", yUnit: "$/h",
+      series: series.map((s) => ({ name: s.name, values: s.values.map((v) => [v[0] - day0, v[1]]) })),
+    });
+  }
+
+  async function refreshPrices() {
+    try {
+      const result = await api("/api/gpu-prices/refresh", { method: "POST" });
+      toast(`${result.stored} quote(s) stored${result.errors.length ? " — " + result.errors.map((e) => e.source + ": " + e.error).join(", ") : ""}`, 6000);
+    } catch (err) {
+      return toast("refresh needs a writer token — " + err.message, 6000);
+    }
+    await loadPlanner();
   }
 
   function renderPlan(plan) {
@@ -725,14 +803,15 @@
         <div class="plan-tile"><div class="k">Storage</div><div class="v">${d.total_gb >= 1000 ? (d.total_gb / 1000).toFixed(2) + "<small>TB</small>" : d.total_gb + "<small>GB</small>"}</div><div class="r">${d.raw_gb} GB raw · ${d.per_scene_mb} MB/scene</div></div>
         <div class="plan-tile"><div class="k">GPU-hours</div><div class="v">${Math.round(c.gpu_hours.expected).toLocaleString("en-US")}</div><div class="r">${band(c.gpu_hours, (n) => Math.round(n).toLocaleString("en-US"))}</div></div>
         <div class="plan-tile"><div class="k">Wall clock</div><div class="v">${fmt.num(c.wall_clock_days.expected, 1)}<small>d</small></div><div class="r">${c.gpus} × ${esc(c.gpu)} · ${Math.round(c.parallel_efficiency * 100)} % scaling</div></div>
-        <div class="plan-tile"><div class="k">Compute cost</div><div class="v">${usd(c.cost_usd.expected)}</div><div class="r">${band(c.cost_usd, usd)} at $${c.usd_per_gpu_hour}/h${c.interruptible ? " interruptible" : ""}</div></div>
+        <div class="plan-tile"><div class="k">Compute cost</div><div class="v">${usd(c.cost_usd.expected)}</div><div class="r">${band(c.cost_usd, usd)} at $${c.usd_per_gpu_hour}/h${c.interruptible ? " interruptible" : ""}</div><div class="r">${priceBadge(c)}</div></div>
         <div class="plan-tile"><div class="k">Storage cost</div><div class="v">${usd(plan.storage.cost_usd)}</div><div class="r">${plan.storage.months} month(s) at $${plan.storage.usd_per_gb_month}/GB</div></div>
         <div class="plan-tile"><div class="k">Total</div><div class="v">${usd(plan.total_usd.expected)}</div><div class="r">${band(plan.total_usd, usd)}</div></div>
       </div>`;
     barChart($("#plan-gpu-chart"), {
-      rows: plan.compare.by_gpu.map((g) => ({ label: `${g.label} · ${Math.round(g.gpu_hours).toLocaleString("en-US")} h`, values: [g.cost_usd] })),
+      rows: plan.compare.by_gpu.map((g) => ({ label: `${g.label} · ${Math.round(g.gpu_hours).toLocaleString("en-US")} h · $${g.usd_per_gpu_hour}`, values: [g.cost_usd] })),
       series: [{ name: "expected cost" }], format: usd,
     });
+    renderPrices(plan);
     barChart($("#plan-program-chart"), {
       rows: plan.compare.by_program.map((p) => ({ label: p.label, values: [p.cost_usd] })),
       series: [{ name: "expected cost" }], format: usd,
@@ -849,6 +928,8 @@
     $("#plan-program").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));
     $("#plan-gpu").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));
     $("#plan-interruptible").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));
+    $("#plan-live-prices").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));
+    $("#plan-prices-refresh").addEventListener("click", () => refreshPrices());
     $("#fleet-table").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-track]"); if (b) { ev.stopPropagation(); selectDevice(b.dataset.track).catch((err) => toast(err.message)); } });
     window.addEventListener("hashchange", () => { const target = parseHash(); if (target && state.token && (target.view !== state.view)) showView(target.view, target.id); });
     window.addEventListener("resize", () => { if (state.view === "runs" && state.samples.length) renderTimeline(); if (state.view === "overview") renderTrend(); if (state.view === "planner" && state.planner.plan) renderPlan(state.planner.plan); });

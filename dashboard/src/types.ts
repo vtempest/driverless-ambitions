@@ -11,6 +11,8 @@ export interface Env {
   API_TOKENS?: string;
   /** Secret used to HMAC-sign evidence manifests. */
   MANIFEST_SIGNING_KEY?: string;
+  /** Optional: Vast.ai key. Listings are public; a key only raises the rate limit. */
+  VAST_API_KEY?: string;
 }
 
 export type Role = "reader" | "writer" | "admin";

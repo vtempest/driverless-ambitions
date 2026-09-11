@@ -12,6 +12,7 @@ import { runEvidence } from "./routes/evidence";
 import { exportRun, exportScenarioXosc } from "./routes/exports";
 import { deviceTrack, ingestOsmAnd, ingestTraccar, listFleet, materializeTrack, postPositions } from "./routes/fleet";
 import { getPlanner, getPlannerOptions, postPlanner } from "./routes/planner";
+import { getGpuPrices, postGpuPricesRefresh, refreshGpuPrices } from "./routes/gpu_prices";
 import { getCoverage } from "./routes/coverage";
 import { getScene, getScenes } from "./routes/scenes";
 import { getLogFile, listLogs, xvizSocket } from "./routes/xviz";
@@ -26,6 +27,8 @@ const router = new Router()
   .get("/api/planner/options", getPlannerOptions)
   .get("/api/planner", getPlanner)
   .post("/api/planner", postPlanner)
+  .get("/api/gpu-prices", getGpuPrices)
+  .post("/api/gpu-prices/refresh", postGpuPricesRefresh)
   .get("/api/coverage", getCoverage)
   .get("/api/scenes", getScenes)
   .get("/api/scenes/:id", getScene)
@@ -106,12 +109,20 @@ export default {
     }
   },
 
-  /** Nightly KPI snapshots for every tenant that has a token configured. */
+  /**
+   * Nightly: a KPI snapshot per tenant, and one marketplace GPU price sample.
+   * The price sample is tenant-independent market data, so it is taken once.
+   */
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
     const tenants = new Set<string>([env.DEFAULT_TENANT]);
     for (const entry of parseTokens(env.API_TOKENS).values()) tenants.add(entry.tenant);
     for (const tenant of tenants) {
       ctx.waitUntil(snapshotKpis(env, tenant).catch((err) => console.error("kpi snapshot failed", tenant, err)));
     }
+    ctx.waitUntil(
+      refreshGpuPrices(env)
+        .then((r) => r.errors.forEach((e) => console.error("gpu price source failed", e.source, e.error)))
+        .catch((err) => console.error("gpu price refresh failed", err)),
+    );
   },
 } satisfies ExportedHandler<Env>;

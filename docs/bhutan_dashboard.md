@@ -104,6 +104,8 @@ need a writer token, just not necessarily in an `Authorization` header).
 | `POST /api/kpis/snapshot` | writer | Force a snapshot |
 | `GET /api/planner/options` | none | Reference tables behind the planner: dataset tiers, training programs, GPU rates, video bitrates |
 | `GET`/`POST /api/planner` | reader | Dataset size, storage and GPU-cost plan for a target corpus, plus the catalog's coverage against it |
+| `GET /api/gpu-prices` | none | Marketplace GPU quotes (median, p25 and cheapest $/GPU-hour per card), their drift against the reference table, and the stored price history |
+| `POST /api/gpu-prices/refresh` | writer | Poll the GPU marketplaces now instead of waiting for the nightly cron |
 | `GET /api/coverage` | reader | ODD coverage matrix (visibility x lighting) with gaps worst first |
 | `GET /api/scenes`, `GET /api/scenes/:id` | none | Synthetic demo scenes for the scene viewer |
 | `GET /api/xviz/logs` | none | The demo scenes as XVIZ v2 logs, with the URLs each streetscape.gl loader needs |
@@ -214,15 +216,50 @@ What the model assumes, and why:
   and evaluation do not shrink linearly. Other GPUs divide those hours by a
   throughput factor (H100 ≈ 2.2× an A100). Aggregate hours do not change with the
   number of GPUs; wall-clock time does, at a conservative 0.92 per doubling.
-* **Price** — list rates are a starting point (A100 80GB ≈ $1.15/h, H100 ≈ $1.80/h
-  on marketplaces, with H100s advertised as low as $0.90/h); marketplace pricing
-  moves constantly with supply, so pass `usd_per_gpu_hour` for a real quote.
-  Interruptible instances are priced at 60 % of on-demand and are only safe with
-  checkpointed training.
+* **Price** — the live marketplace median when one is stored, otherwise a reference
+  rate (A100 80GB ≈ $1.15/h, H100 ≈ $1.80/h, with H100s advertised as low as
+  $0.90/h). `usd_per_gpu_hour` overrides both; `live_prices=false` pins a plan to
+  the reference table so two plans made a week apart stay comparable. Interruptible
+  instances use the quoted bid when the marketplace publishes one and 60 % of
+  on-demand otherwise, and are only safe with checkpointed training.
 
 The response also carries `coverage`: how much accepted collection time the catalog
 already holds, expressed as scenes of the planned clip length, and how many hours of
-driving remain to hit the target.
+driving remain to hit the target, and `prices`: the live rates the plan was costed
+at and how far each has drifted from the reference table.
+
+### Live marketplace prices
+
+`GET /api/gpu-prices` serves what the GPU marketplaces are asking today, so a plan
+is priced against a rentable machine rather than a number written into the source
+last quarter. The nightly cron polls [Vast.ai](https://console.vast.ai/api/v0/bundles/)
+(public bundle search, no key needed) and [RunPod](https://api.runpod.io/graphql)
+(public GPU catalogue), normalises every listing to a **per-GPU** hourly price —
+Vast quotes `dph_total` for the whole machine — and stores one sample per source
+and card in `gpu_price_samples`.
+
+```sh
+curl "$BASE/api/gpu-prices?days=60"                 # quotes, drift, price history
+curl -X POST -H "authorization: Bearer $TOKEN" "$BASE/api/gpu-prices/refresh"
+```
+
+* **The median, not the minimum.** The cheapest listing for a card is usually one
+  host with poor reliability or a disk too small for the corpus; a budget built on
+  it does not survive contact with the queue. The minimum and the 25th percentile
+  are stored alongside so the spread stays visible, and the Planner tab shows all
+  three.
+* **Cheapest fresh median across sources** is the rate a plan is costed at, and the
+  source is recorded on the plan (`compute.price_source` is `live:vast.ai`,
+  `reference`, or `override`).
+* **Stale quotes are dropped, not aged in.** Past 48 hours a sample is still served
+  and charted, but the planner falls back to the reference table and says so — a
+  two-day-old median is a worse estimate than a documented reference point, because
+  it looks live.
+* **Cards are matched by name and memory floor**, so an A100 40GB listing never
+  prices an A100 80GB plan.
+
+Both marketplaces are read-only and unauthenticated here; `VAST_API_KEY` is
+optional and only raises the rate limit.
 
 ## ODD coverage matrix
 

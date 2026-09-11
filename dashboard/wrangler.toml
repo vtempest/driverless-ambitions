@@ -4,7 +4,8 @@
 # dashboard (everything else) from the same origin. State lives in:
 #   * D1  - metadata catalog: runs, events, segments, scenarios, evaluations, clips, audit log
 #   * R2  - immutable raw data: telemetry chunks (JSONL) and clips
-#   * Cron - daily KPI snapshots for trend lines and partner reports
+#   * Cron - daily KPI snapshots for trend lines and partner reports, and one
+#            marketplace GPU price sample per source and card for the planner
 #
 # Before the first deploy:
 #   wrangler d1 create carla-bhutan-atlas            # paste the database_id below
@@ -12,6 +13,7 @@
 #   wrangler d1 migrations apply carla-bhutan-atlas --remote
 #   wrangler secret put API_TOKENS                   # "token=tenant:role;token2=tenant2:reader"
 #   wrangler secret put MANIFEST_SIGNING_KEY         # random 32+ byte string
+#   wrangler secret put VAST_API_KEY                 # optional: raises the Vast.ai rate limit only
 #   wrangler deploy
 
 name = "carla-bhutan-atlas"

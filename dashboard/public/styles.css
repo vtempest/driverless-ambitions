@@ -183,6 +183,12 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .plan-tile .r { color: var(--text-muted); font-size: 11px; }
 .coverage-bar { height: 10px; background: var(--grid); border-radius: 5px; overflow: hidden; margin: 8px 0 6px; }
 .coverage-bar i { display: block; height: 100%; background: var(--status-good); }
+.pill.live::before { background: var(--status-good); }
+.pill.reference::before { background: var(--text-muted); }
+.pill.override::before { background: var(--series-1); }
+.price-note { color: var(--text-muted); font-size: 12px; margin: 6px 0 0; }
+.drift-up { color: var(--status-critical); }
+.drift-down { color: var(--status-good); }
 .assumptions { margin: 0; padding-left: 18px; color: var(--text-secondary); font-size: 12px; }
 .assumptions li { margin-bottom: 4px; }
 .pill.online::before { background: var(--status-good); }

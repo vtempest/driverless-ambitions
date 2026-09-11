@@ -1,6 +1,8 @@
 import type { RouteContext } from "../router";
 import { authenticate } from "../auth";
 import { DEFAULT_INPUT, GPUS, PROGRAMS, RESOLUTIONS, TIERS, comparePlans, planProgram } from "../planner";
+import { MAX_QUOTE_AGE_HOURS, driftFromReference } from "../gpu_prices";
+import { latestRates } from "./gpu_prices";
 import { json, readJson } from "../util";
 
 /** Everything already in the catalog, expressed in the planner's units. */
@@ -42,23 +44,32 @@ function withGap(plan: ReturnType<typeof planProgram>, coverage: Awaited<ReturnT
 /** GET /api/planner/options — the reference tables the form and any client build on. */
 export function getPlannerOptions(_c: RouteContext): Response {
   const list = <T extends Record<string, unknown>>(table: Record<string, T>) => Object.entries(table).map(([id, value]) => ({ id, ...value }));
-  return json({ defaults: DEFAULT_INPUT, tiers: TIERS, programs: list(PROGRAMS), gpus: list(GPUS), resolutions: list(RESOLUTIONS) }, 200, { "cache-control": "public, max-age=300" });
+  return json({ defaults: DEFAULT_INPUT, tiers: TIERS, programs: list(PROGRAMS), gpus: list(GPUS), resolutions: list(RESOLUTIONS), max_quote_age_hours: MAX_QUOTE_AGE_HOURS }, 200, { "cache-control": "public, max-age=300" });
+}
+
+/** One plan, priced against whatever fresh marketplace quotes the cron has stored. */
+async function planResponse(c: RouteContext, tenant: string, raw: Record<string, unknown>): Promise<Response> {
+  const rates = await latestRates(c.env);
+  const options = { rates };
+  const plan = planProgram(raw, options);
+  const coverage = await catalogCoverage(c, tenant, plan.input.clip_seconds);
+  return json({
+    ...plan,
+    compare: comparePlans(plan.input, options),
+    coverage: withGap(plan, coverage),
+    prices: { rates, drift: driftFromReference(rates), max_age_hours: MAX_QUOTE_AGE_HOURS },
+  });
 }
 
 /** GET /api/planner?scenes=100000&clip_seconds=10&gpu=a100_80gb&program=fine_tune */
 export async function getPlanner(c: RouteContext): Promise<Response> {
   const who = await authenticate(c.request, c.env, "reader");
-  const raw = Object.fromEntries(c.url.searchParams.entries());
-  const plan = planProgram(raw);
-  const coverage = await catalogCoverage(c, who.tenant, plan.input.clip_seconds);
-  return json({ ...plan, compare: comparePlans(plan.input), coverage: withGap(plan, coverage) });
+  return planResponse(c, who.tenant, Object.fromEntries(c.url.searchParams.entries()));
 }
 
 /** POST /api/planner — same plan from a JSON body, for scripts and notebooks. */
 export async function postPlanner(c: RouteContext): Promise<Response> {
   const who = await authenticate(c.request, c.env, "reader");
   const body = await readJson<Record<string, unknown>>(c.request, 64 * 1024);
-  const plan = planProgram(body || {});
-  const coverage = await catalogCoverage(c, who.tenant, plan.input.clip_seconds);
-  return json({ ...plan, compare: comparePlans(plan.input), coverage: withGap(plan, coverage) });
+  return planResponse(c, who.tenant, body || {});
 }
