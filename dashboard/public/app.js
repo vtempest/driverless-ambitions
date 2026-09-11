@@ -18,7 +18,7 @@
     deck: null,
     history: [],
     fleet: { devices: [], device: null, track: [], deck: null, timer: null },
-    planner: { options: null, plan: null },
+    planner: { options: null, plan: null, prices: null },
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -671,6 +671,16 @@
   };
   const usd = (n) => "$" + Math.round(n).toLocaleString("en-US");
 
+  /** Where the $/GPU-hour in a plan came from: a live quote, a typed rate or the reference table. */
+  function priceSourceNote(compute) {
+    if (compute.price_source === "override") return "your rate";
+    if (compute.price_source === "live" && compute.price_quote) {
+      const q = compute.price_quote;
+      return `market median of ${q.samples} ${q.provider} listing(s), ${fmt.num(q.age_hours, 1)} h old, cheapest $${fmt.num(q.min_usd_per_hour, 2)}/h`;
+    }
+    return "reference rate — no recent listing";
+  }
+
   /** Fill the selects from /api/planner/options so the form can never drift from the API. */
   async function loadPlannerOptions() {
     if (state.planner.options) return state.planner.options;
@@ -689,6 +699,7 @@
       else if (value !== null && value !== undefined && $(sel).tagName === "SELECT") $(sel).value = value;
     }
     $("#plan-interruptible").checked = !!options.defaults.interruptible;
+    $("#plan-live").checked = options.defaults.live_prices !== false;
     return options;
   }
 
@@ -699,16 +710,62 @@
       if (value !== "") params.set(key, value);
     }
     if ($("#plan-interruptible").checked) params.set("interruptible", "true");
+    if (!$("#plan-live").checked) params.set("live_prices", "false");
     return params;
   }
 
   async function loadPlanner() {
     await loadPlannerOptions();
     const params = plannerQuery();
-    const plan = await api("/api/planner?" + params.toString());
+    // The price feed carries no tenant data and is fetched alongside the plan so
+    // the chart still renders when the plan itself fails on a missing token.
+    const [plan, prices] = await Promise.all([api("/api/planner?" + params.toString()), loadGpuPrices()]);
     state.planner.plan = plan;
     setHash("planner", String(plan.input.scenes));
     renderPlan(plan);
+    renderPrices(prices, plan.input.gpu);
+  }
+
+  async function loadGpuPrices() {
+    try {
+      state.planner.prices = await fetch("/api/gpu-prices").then((r) => (r.ok ? r.json() : null));
+    } catch (_) {
+      state.planner.prices = null;
+    }
+    return state.planner.prices;
+  }
+
+  /** The market behind the plan: where the rate came from and where it has been. */
+  function renderPrices(prices, gpu) {
+    const status = $("#plan-prices-status"), chart = $("#plan-price-chart"), table = $("#plan-price-table");
+    if (!prices || !prices.quotes || !prices.quotes.length) {
+      status.textContent = "no marketplace observation yet — the nightly cron polls Vast.ai and RunPod, or an admin can POST /api/gpu-prices/refresh. Plans use the reference rates until then.";
+      chart.innerHTML = ""; table.innerHTML = "";
+      return;
+    }
+    status.innerHTML = `${prices.stale ? "stale: " : ""}last observed ${esc(new Date(prices.observed_at).toLocaleString())} (${fmt.num(prices.age_hours, 1)} h ago) from ${prices.providers.map(esc).join(", ")}` +
+      (prices.stale ? ` — older than ${prices.max_age_hours} h, so plans fall back to reference rates.` : "");
+
+    const series = (prices.history || []).filter((s) => s.gpu === gpu && s.points.length > 1);
+    if (series.length) {
+      const day0 = Math.min(...series.flatMap((s) => s.points.map((p) => Date.parse(p.observed_at) / 86400000)));
+      lineChart(chart, {
+        title: "Median $/GPU-hour",
+        xLabel: " d",
+        series: series.map((s) => ({ name: s.mode === "interruptible" ? "interruptible" : "on demand", values: s.points.map((p) => [Date.parse(p.observed_at) / 86400000 - day0, p.usd_per_hour]) })),
+      });
+    } else {
+      chart.innerHTML = '<div class="empty">one observation so far — the line appears on the second nightly poll</div>';
+    }
+
+    const rows = prices.quotes.filter((q) => q.gpu === gpu).sort((a, b) => a.mode.localeCompare(b.mode) || a.median_usd_per_hour - b.median_usd_per_hour);
+    table.innerHTML = `<table class="data-table">
+      <thead><tr><th>Provider</th><th>Mode</th><th class="num">Cheapest</th><th class="num">25th pct</th><th class="num">Median</th><th class="num">Listings</th></tr></thead>
+      <tbody>${rows.map((q) => `<tr>
+        <td>${esc(q.provider)}</td><td>${q.mode === "interruptible" ? "interruptible" : "on demand"}</td>
+        <td class="num">$${fmt.num(q.min_usd_per_hour, 2)}</td><td class="num">$${fmt.num(q.p25_usd_per_hour, 2)}</td>
+        <td class="num">$${fmt.num(q.median_usd_per_hour, 2)}</td><td class="num">${q.samples}</td>
+      </tr>`).join("") || `<tr><td colspan="6" class="muted">no listing for this GPU in the last poll</td></tr>`}</tbody></table>`;
   }
 
   function renderPlan(plan) {
@@ -725,12 +782,12 @@
         <div class="plan-tile"><div class="k">Storage</div><div class="v">${d.total_gb >= 1000 ? (d.total_gb / 1000).toFixed(2) + "<small>TB</small>" : d.total_gb + "<small>GB</small>"}</div><div class="r">${d.raw_gb} GB raw · ${d.per_scene_mb} MB/scene</div></div>
         <div class="plan-tile"><div class="k">GPU-hours</div><div class="v">${Math.round(c.gpu_hours.expected).toLocaleString("en-US")}</div><div class="r">${band(c.gpu_hours, (n) => Math.round(n).toLocaleString("en-US"))}</div></div>
         <div class="plan-tile"><div class="k">Wall clock</div><div class="v">${fmt.num(c.wall_clock_days.expected, 1)}<small>d</small></div><div class="r">${c.gpus} × ${esc(c.gpu)} · ${Math.round(c.parallel_efficiency * 100)} % scaling</div></div>
-        <div class="plan-tile"><div class="k">Compute cost</div><div class="v">${usd(c.cost_usd.expected)}</div><div class="r">${band(c.cost_usd, usd)} at $${c.usd_per_gpu_hour}/h${c.interruptible ? " interruptible" : ""}</div></div>
+        <div class="plan-tile"><div class="k">Compute cost</div><div class="v">${usd(c.cost_usd.expected)}</div><div class="r">${band(c.cost_usd, usd)} at $${c.usd_per_gpu_hour}/h${c.interruptible ? " interruptible" : ""} · ${esc(priceSourceNote(c))}</div></div>
         <div class="plan-tile"><div class="k">Storage cost</div><div class="v">${usd(plan.storage.cost_usd)}</div><div class="r">${plan.storage.months} month(s) at $${plan.storage.usd_per_gb_month}/GB</div></div>
         <div class="plan-tile"><div class="k">Total</div><div class="v">${usd(plan.total_usd.expected)}</div><div class="r">${band(plan.total_usd, usd)}</div></div>
       </div>`;
     barChart($("#plan-gpu-chart"), {
-      rows: plan.compare.by_gpu.map((g) => ({ label: `${g.label} · ${Math.round(g.gpu_hours).toLocaleString("en-US")} h`, values: [g.cost_usd] })),
+      rows: plan.compare.by_gpu.map((g) => ({ label: `${g.label} · $${g.usd_per_gpu_hour}/h${g.price_source === "live" ? " live" : ""}`, values: [g.cost_usd] })),
       series: [{ name: "expected cost" }], format: usd,
     });
     barChart($("#plan-program-chart"), {
@@ -849,9 +906,10 @@
     $("#plan-program").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));
     $("#plan-gpu").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));
     $("#plan-interruptible").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));
+    $("#plan-live").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));
     $("#fleet-table").addEventListener("click", (ev) => { const b = ev.target.closest("button[data-track]"); if (b) { ev.stopPropagation(); selectDevice(b.dataset.track).catch((err) => toast(err.message)); } });
     window.addEventListener("hashchange", () => { const target = parseHash(); if (target && state.token && (target.view !== state.view)) showView(target.view, target.id); });
-    window.addEventListener("resize", () => { if (state.view === "runs" && state.samples.length) renderTimeline(); if (state.view === "overview") renderTrend(); if (state.view === "planner" && state.planner.plan) renderPlan(state.planner.plan); });
+    window.addEventListener("resize", () => { if (state.view === "runs" && state.samples.length) renderTimeline(); if (state.view === "overview") renderTrend(); if (state.view === "planner" && state.planner.plan) { renderPlan(state.planner.plan); renderPrices(state.planner.prices, state.planner.plan.input.gpu); } });
     const initial = parseHash();
     if (initial) state.view = initial.view;
     if (state.token) connect(); else showView(state.view, initial ? initial.id : null);

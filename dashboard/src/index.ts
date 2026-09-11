@@ -12,6 +12,8 @@ import { runEvidence } from "./routes/evidence";
 import { exportRun, exportScenarioXosc } from "./routes/exports";
 import { deviceTrack, ingestOsmAnd, ingestTraccar, listFleet, materializeTrack, postPositions } from "./routes/fleet";
 import { getPlanner, getPlannerOptions, postPlanner } from "./routes/planner";
+import { getGpuPrices, postGpuPricesRefresh } from "./routes/gpu_prices";
+import { refreshGpuPrices } from "./gpu_prices";
 import { getCoverage } from "./routes/coverage";
 import { getScene, getScenes } from "./routes/scenes";
 import { getLogFile, listLogs, xvizSocket } from "./routes/xviz";
@@ -26,6 +28,8 @@ const router = new Router()
   .get("/api/planner/options", getPlannerOptions)
   .get("/api/planner", getPlanner)
   .post("/api/planner", postPlanner)
+  .get("/api/gpu-prices", getGpuPrices)
+  .post("/api/gpu-prices/refresh", postGpuPricesRefresh)
   .get("/api/coverage", getCoverage)
   .get("/api/scenes", getScenes)
   .get("/api/scenes/:id", getScene)
@@ -106,8 +110,14 @@ export default {
     }
   },
 
-  /** Nightly KPI snapshots for every tenant that has a token configured. */
+  /** Nightly KPI snapshots for every tenant, and one marketplace GPU price observation. */
   async scheduled(_controller: ScheduledController, env: Env, ctx: ExecutionContext): Promise<void> {
+    // Market data is shared, so it is polled once per trigger rather than per tenant.
+    ctx.waitUntil(
+      refreshGpuPrices(env)
+        .then((quotes) => console.log("gpu prices refreshed", quotes.length))
+        .catch((err) => console.error("gpu price refresh failed", err)),
+    );
     const tenants = new Set<string>([env.DEFAULT_TENANT]);
     for (const entry of parseTokens(env.API_TOKENS).values()) tenants.add(entry.tenant);
     for (const tenant of tenants) {

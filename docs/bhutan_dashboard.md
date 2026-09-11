@@ -104,6 +104,8 @@ need a writer token, just not necessarily in an `Authorization` header).
 | `POST /api/kpis/snapshot` | writer | Force a snapshot |
 | `GET /api/planner/options` | none | Reference tables behind the planner: dataset tiers, training programs, GPU rates, video bitrates |
 | `GET`/`POST /api/planner` | reader | Dataset size, storage and GPU-cost plan for a target corpus, plus the catalog's coverage against it |
+| `GET /api/gpu-prices` | none | Latest Vast.ai/RunPod quotes per GPU class and pricing mode, with price history |
+| `POST /api/gpu-prices/refresh` | admin | Poll the marketplaces now instead of waiting for the nightly cron |
 | `GET /api/coverage` | reader | ODD coverage matrix (visibility x lighting) with gaps worst first |
 | `GET /api/scenes`, `GET /api/scenes/:id` | none | Synthetic demo scenes for the scene viewer |
 | `GET /api/xviz/logs` | none | The demo scenes as XVIZ v2 logs, with the URLs each streetscape.gl loader needs |
@@ -214,15 +216,50 @@ What the model assumes, and why:
   and evaluation do not shrink linearly. Other GPUs divide those hours by a
   throughput factor (H100 ≈ 2.2× an A100). Aggregate hours do not change with the
   number of GPUs; wall-clock time does, at a conservative 0.92 per doubling.
-* **Price** — list rates are a starting point (A100 80GB ≈ $1.15/h, H100 ≈ $1.80/h
-  on marketplaces, with H100s advertised as low as $0.90/h); marketplace pricing
-  moves constantly with supply, so pass `usd_per_gpu_hour` for a real quote.
-  Interruptible instances are priced at 60 % of on-demand and are only safe with
-  checkpointed training.
+* **Price** — a live marketplace quote when the price feed below has one, and the
+  reference table otherwise (A100 80GB ≈ $1.15/h, H100 ≈ $1.80/h, with H100s
+  advertised as low as $0.90/h). `usd_per_gpu_hour` always wins over both.
+  Interruptible instances are priced at 60 % of on-demand when the number comes
+  from the reference table, and at the marketplace's own bid price when it comes
+  from a quote; either way they are only safe with checkpointed training.
 
 The response also carries `coverage`: how much accepted collection time the catalog
 already holds, expressed as scenes of the planned clip length, and how many hours of
 driving remain to hit the target.
+
+### Live marketplace GPU prices
+
+The reference rates above are a snapshot of a market that moves hourly: the same
+H100 is listed near $0.90/h on one host and above $2.00 on another, and an
+interruptible bid is a third number. `GET /api/gpu-prices` serves what the
+marketplaces actually list.
+
+```sh
+curl "$BASE/api/gpu-prices"                                    # no token: market data, not tenant data
+curl -X POST -H "authorization: Bearer $ADMIN_TOKEN" "$BASE/api/gpu-prices/refresh"
+```
+
+* **Sources** — the Vast.ai `/api/v0/bundles/` listing API and the RunPod
+  GraphQL `gpuTypes` query, polled once per nightly cron trigger and stored in
+  `gpu_price_quotes` (migration `0003`). Both are public endpoints and neither
+  needs a key.
+* **Normalisation** — a Vast.ai listing prices a whole machine, so `dph_total`
+  and `min_bid` are divided by `num_gpus`; card names are matched to the
+  planner's four GPU classes, with memory disambiguating the 40 GB A100 from the
+  80 GB one; hosts below 0.9 reliability and $0 listings are dropped.
+* **Aggregation** — one quote per provider, GPU class and pricing mode, carrying
+  the cheapest listing, the 25th percentile and the median. A plan is priced on
+  the **median of the cheapest provider**, not the cheapest listing, which is
+  usually gone by the time a job starts; the cheapest is shown next to it.
+* **Freshness** — a quote older than 72 hours is still shown but no longer used,
+  so a broken feed degrades to the reference rates rather than to a stale price.
+  Every plan says which of the three sources produced its number in
+  `compute.price_source` (`live`, `override` or `reference`) and attaches the
+  quote in `compute.price_quote`.
+
+The Planner tab shows the median-price history per GPU as a line chart, the
+per-provider quote table, and a "price on live marketplace listings" switch that
+turns the feed off for a plan that has to be reproducible.
 
 ## ODD coverage matrix
 

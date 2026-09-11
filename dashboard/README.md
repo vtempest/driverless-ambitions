@@ -29,6 +29,16 @@ Beyond the run/scenario/evaluation/clip API, the Worker also exposes:
 * `GET /api/planner` — dataset size, storage and GPU-cost bands for a target
   corpus (scenes, clip length, cameras, resolution) on marketplace GPUs, with the
   catalog's current coverage against that target. Powers the Planner tab.
+* `GET /api/gpu-prices` — live $/GPU-hour from the
+  [Vast.ai](https://vast.ai) and [RunPod](https://runpod.io) public listing
+  APIs, aggregated to a min/25th-percentile/median per GPU class and pricing
+  mode (on demand and interruptible), with the history behind the planner's
+  price chart. The nightly cron records one observation; an admin can force one
+  with `POST /api/gpu-prices/refresh`. The planner prices a run on the cheapest
+  provider's median when an observation is less than 72 hours old and says so
+  in `compute.price_source`; otherwise it falls back to the reference rates in
+  `src/planner.ts`. Market data with no tenant in it, so the read needs no
+  token.
 * `GET /api/coverage` — ODD coverage matrix: scenario variants and the runs
   recorded against them, crossed by visibility and lighting class. A cell is
   covered at `min_runs` accepted runs (default 3), thin when variants exist but

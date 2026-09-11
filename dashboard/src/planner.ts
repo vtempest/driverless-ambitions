@@ -8,7 +8,15 @@
  * pure arithmetic over published reference points so the Worker, the front end
  * and the tests all agree; the reference points themselves are listed in
  * `assumptions` on every response so a reader can argue with them.
+ *
+ * The hourly rates below are reference points, not quotes. When the price feed
+ * in `gpu_prices.ts` has a recent observation, pass it in as `rates` and the
+ * plan is priced on the market instead; the response always says which of the
+ * three sources — an explicit override, a live quote or the reference table —
+ * produced the number.
  */
+
+import type { LiveRates, PriceMode, Rate } from "./gpu_prices";
 
 export type TierId = "proof_of_concept" | "domain_adaptation" | "robust";
 export type ProgramId = "fine_tune" | "medium_train" | "from_scratch";
@@ -77,6 +85,8 @@ export interface PlannerInput {
   usd_per_gpu_hour: number | null;
   usd_per_gb_month: number;
   retention_months: number | null;
+  /** Use a recent marketplace quote in place of the reference rate when one exists. */
+  live_prices: boolean;
 }
 
 export const DEFAULT_INPUT: PlannerInput = {
@@ -92,7 +102,11 @@ export const DEFAULT_INPUT: PlannerInput = {
   usd_per_gpu_hour: null,
   usd_per_gb_month: 0.15,
   retention_months: null,
+  live_prices: true,
 };
+
+/** Where the $/GPU-hour in a plan came from. */
+export type PriceSource = "override" | "live" | "reference";
 
 export interface Plan {
   input: PlannerInput;
@@ -112,6 +126,9 @@ export interface Plan {
     gpu: string;
     gpus: number;
     usd_per_gpu_hour: number;
+    price_source: PriceSource;
+    price_quote: Rate | null;
+    reference_usd_per_hour: number;
     interruptible: boolean;
     scale: number;
     gpu_hours: Band;
@@ -125,19 +142,19 @@ export interface Plan {
 }
 
 export interface Comparison {
-  by_gpu: Array<{ id: GpuId; label: string; usd_per_gpu_hour: number; gpu_hours: number; cost_usd: number; wall_clock_days: number }>;
+  by_gpu: Array<{ id: GpuId; label: string; usd_per_gpu_hour: number; price_source: PriceSource; gpu_hours: number; cost_usd: number; wall_clock_days: number }>;
   by_program: Array<{ id: ProgramId; label: string; gpu_hours: number; cost_usd: number; note: string }>;
 }
 
 /** The same corpus priced on every GPU and for every training program, for the side-by-side view. */
-export function comparePlans(input: PlannerInput): Comparison {
+export function comparePlans(input: PlannerInput, rates?: LiveRates): Comparison {
   return {
     by_gpu: (Object.keys(GPUS) as GpuId[]).map((id) => {
-      const p = planProgram({ ...input, gpu: id, usd_per_gpu_hour: input.usd_per_gpu_hour });
-      return { id, label: GPUS[id].label, usd_per_gpu_hour: p.compute.usd_per_gpu_hour, gpu_hours: p.compute.gpu_hours.expected, cost_usd: p.compute.cost_usd.expected, wall_clock_days: p.compute.wall_clock_days.expected };
+      const p = planProgram({ ...input, gpu: id, usd_per_gpu_hour: input.usd_per_gpu_hour }, rates);
+      return { id, label: GPUS[id].label, usd_per_gpu_hour: p.compute.usd_per_gpu_hour, price_source: p.compute.price_source, gpu_hours: p.compute.gpu_hours.expected, cost_usd: p.compute.cost_usd.expected, wall_clock_days: p.compute.wall_clock_days.expected };
     }),
     by_program: (Object.keys(PROGRAMS) as ProgramId[]).map((id) => {
-      const p = planProgram({ ...input, program: id });
+      const p = planProgram({ ...input, program: id }, rates);
       return { id, label: PROGRAMS[id].label, gpu_hours: p.compute.gpu_hours.expected, cost_usd: p.compute.cost_usd.expected, note: PROGRAMS[id].note };
     }),
   };
@@ -183,6 +200,7 @@ export function normalizeInput(raw: Record<string, unknown>): PlannerInput {
     usd_per_gpu_hour: priceRaw === undefined || priceRaw === null || priceRaw === "" ? null : round(clamp(num(priceRaw, 0), 0.01, 100), 4),
     usd_per_gb_month: round(clamp(num(raw.usd_per_gb_month, d.usd_per_gb_month), 0, 10), 4),
     retention_months: retentionRaw === undefined || retentionRaw === null || retentionRaw === "" ? null : Math.round(clamp(num(retentionRaw, 1), 1, 120)),
+    live_prices: raw.live_prices === undefined || raw.live_prices === null || raw.live_prices === "" ? d.live_prices : !(raw.live_prices === false || raw.live_prices === "false" || raw.live_prices === "0"),
   };
 }
 
@@ -202,7 +220,23 @@ export function parallelEfficiency(gpus: number): number {
   return round(Math.pow(0.92, Math.log2(Math.max(1, gpus))), 4);
 }
 
-export function planProgram(rawInput: Record<string, unknown> | PlannerInput): Plan {
+/**
+ * Price one GPU-hour: an explicit rate always wins, then a recent marketplace
+ * quote for this GPU and pricing mode, then the reference table. An
+ * interruptible marketplace quote is already a bid price, so the reference
+ * discount is not applied on top of it.
+ */
+export function priceGpuHour(input: PlannerInput, rates?: LiveRates): { price: number; source: PriceSource; quote: Rate | null; reference: number } {
+  const gpu = GPUS[input.gpu];
+  const mode: PriceMode = input.interruptible ? "interruptible" : "on_demand";
+  const reference = round(gpu.usd_per_hour * (input.interruptible ? INTERRUPTIBLE_DISCOUNT : 1), 4);
+  if (input.usd_per_gpu_hour !== null) return { price: input.usd_per_gpu_hour, source: "override", quote: null, reference };
+  const quote = input.live_prices ? rates?.[input.gpu]?.[mode] ?? null : null;
+  if (quote) return { price: quote.usd_per_hour, source: "live", quote, reference };
+  return { price: reference, source: "reference", quote: null, reference };
+}
+
+export function planProgram(rawInput: Record<string, unknown> | PlannerInput, rates?: LiveRates): Plan {
   const input = normalizeInput(rawInput as Record<string, unknown>);
   const gpu = GPUS[input.gpu];
   const program = PROGRAMS[input.program];
@@ -220,7 +254,8 @@ export function planProgram(rawInput: Record<string, unknown> | PlannerInput): P
   const gpuHours = mapBand(program.gpu_hours, (h) => round((h * scale) / gpu.speed, 1));
   const efficiency = parallelEfficiency(input.gpus);
   const wallClockDays = mapBand(gpuHours, (h) => round(h / (input.gpus * efficiency) / 24, 2));
-  const price = input.usd_per_gpu_hour ?? round(gpu.usd_per_hour * (input.interruptible ? INTERRUPTIBLE_DISCOUNT : 1), 4);
+  const pricing = priceGpuHour(input, rates);
+  const price = pricing.price;
   const costUsd = mapBand(gpuHours, (h) => Math.round(h * price));
 
   const months = input.retention_months ?? Math.max(1, Math.ceil(wallClockDays.expected / 30));
@@ -245,6 +280,9 @@ export function planProgram(rawInput: Record<string, unknown> | PlannerInput): P
       gpu: gpu.label,
       gpus: input.gpus,
       usd_per_gpu_hour: price,
+      price_source: pricing.source,
+      price_quote: pricing.quote,
+      reference_usd_per_hour: pricing.reference,
       interruptible: input.interruptible,
       scale,
       gpu_hours: gpuHours,
@@ -257,7 +295,11 @@ export function planProgram(rawInput: Record<string, unknown> | PlannerInput): P
     assumptions: [
       `Dataset tiers: proof of concept 1k–10k scenes, useful domain adaptation 10k–100k, robust across weather/lighting/road types 100k+.`,
       `${program.label}: ${program.gpu_hours.low}–${program.gpu_hours.high} A100-class GPU-hours at ${(BASELINE_FRAMES / 1e6).toFixed(0)}M frames (100k scenes × 10 s × 10 fps × 1 camera), scaled by (frames/baseline)^${SCALE_EXPONENT} for fixed pipeline overhead.`,
-      `${gpu.label} runs ${gpu.speed}× an A100 80GB for this workload and lists near $${gpu.usd_per_hour.toFixed(2)}/hour; marketplace prices move constantly with supply, so override the rate for a real quote.`,
+      pricing.source === "live" && pricing.quote
+        ? `${gpu.label} runs ${gpu.speed}× an A100 80GB for this workload; priced at $${price}/hour — the median of ${pricing.quote.samples} ${pricing.quote.provider} ${input.interruptible ? "bid" : "on-demand"} listing(s) observed ${pricing.quote.age_hours} h ago, cheapest listing $${pricing.quote.min_usd_per_hour}/hour (reference rate $${pricing.reference}).`
+        : pricing.source === "override"
+          ? `${gpu.label} runs ${gpu.speed}× an A100 80GB for this workload; priced at the $${price}/hour you supplied rather than the $${pricing.reference}/hour reference rate.`
+          : `${gpu.label} runs ${gpu.speed}× an A100 80GB for this workload and lists near $${gpu.usd_per_hour.toFixed(2)}/hour; marketplace prices move constantly with supply, so this is a reference rate, not a quote — /api/gpu-prices carries live listings when the feed has run.`,
       input.interruptible ? `Interruptible instances are priced at ${Math.round(INTERRUPTIBLE_DISCOUNT * 100)} % of on-demand — only safe with checkpointed training.` : `On-demand pricing; checkpointed pipelines can take roughly ${Math.round((1 - INTERRUPTIBLE_DISCOUNT) * 100)} % off on interruptible instances.`,
       `${resolution.label} at ${resolution.mbps} Mbit/s per camera; labels and manifests add 8 %, decoded shards and checkpoints add another copy during a run.`,
       `Instances default to a ${DEFAULT_DISK_GB} GB disk; this plan needs ${round(Math.max(0, totalGb - DEFAULT_DISK_GB), 1)} GB more, billed at $${input.usd_per_gb_month}/GB-month for ${months} month(s).`,

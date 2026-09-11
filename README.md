@@ -146,7 +146,8 @@ The fine-grained, actionable list (with target files and upstream tools) is main
 - [x] Prometheus `/api/metrics` for Grafana alerting; OpenAPI spec for partner clients
 - [x] Multi-tenant token auth with roles; nightly KPI snapshots via cron
 - [x] Dataset and compute planner: corpus size, storage and marketplace GPU cost bands for a training program, measured against the catalog's coverage
-- [ ] Live marketplace GPU prices and saved plans, so a budget line is quoted rather than estimated
+- [x] Live marketplace GPU prices: Vast.ai and RunPod listings polled nightly, aggregated per GPU class and pricing mode, and priced into the plan with its provenance
+- [ ] Saved plans and a training-run registry, so a budget line is tracked planned-versus-actual
 - [x] streetscape.gl/XVIZ log viewer at `/viewer/`: ego pose and mesh, simulated lidar, actor boxes with ranges, road geometry, planned trajectory, synchronized metric charts and a scene-event table
 - [x] XVIZ v2 served from Workers — cached per-frame files and a `WebSocketPair` stream, so both of streetscape.gl's loaders work against the same origin
 - [ ] deck.gl route playback with synchronized video/telemetry/event timeline
