@@ -35,6 +35,7 @@ export function openApiDocument(baseUrl: string, appName: string): Record<string
         Scenario: { type: "object", required: ["id", "family", "content_hash", "params"], properties: { id: { type: "string" }, family: { type: "string" }, group: { type: "string" }, name: { type: "string" }, description: { type: "string" }, tags: { type: "array", items: { type: "string" } }, params: { type: "object" }, actors: { type: "array", items: { type: "object" } }, expected_events: { type: "array", items: { type: "string" } }, seed: { type: "integer" }, version: { type: "string" }, content_hash: { type: "string" } } },
         Evaluation: { type: "object", required: ["evaluation_id", "model_id", "overall"], properties: { evaluation_id: { type: "string" }, model_id: { type: "string" }, model_version: { type: "string" }, run_id: { type: "string" }, scenario_id: { type: "string" }, conditions: { type: "object" }, overall: { $ref: "#/components/schemas/Counts" }, by_class: { type: "object" }, by_condition: { type: "object" }, failure_clusters: { type: "array", items: { type: "object" } }, frames_evaluated: { type: "integer" }, inputs: { type: "object" }, reproducible: { type: "boolean" } } },
         Counts: { type: "object", properties: { tp: { type: "integer" }, fp: { type: "integer" }, fn: { type: "integer" }, precision: { type: "number" }, recall: { type: "number" }, f1: { type: "number" } } },
+        CollectionPlanOptions: { type: "object", properties: { min_runs_per_cell: { type: "integer" }, seconds_per_run: { type: "number" }, clip_seconds: { type: "number" }, max_targets: { type: "integer" }, variants_per_target: { type: "integer" }, vehicle_class: { type: "string" }, drive_hours_cap: { type: "number" }, route_classes: { type: "array", items: { type: "string" } }, gaps_only: { type: "boolean" } } },
         PlannerInput: { type: "object", properties: { scenes: { type: "integer" }, clip_seconds: { type: "number" }, fps: { type: "number" }, cameras: { type: "integer" }, resolution: { type: "string", enum: ["720p", "1080p", "1440p", "4k"] }, program: { type: "string", enum: ["fine_tune", "medium_train", "from_scratch"] }, gpu: { type: "string", enum: ["a100_80gb", "h100_80gb", "l40s", "rtx4090"] }, gpus: { type: "integer" }, interruptible: { type: "boolean" }, usd_per_gpu_hour: { type: ["number", "null"] }, usd_per_gb_month: { type: "number" }, retention_months: { type: ["integer", "null"] } } },
       },
     },
@@ -56,6 +57,16 @@ export function openApiDocument(baseUrl: string, appName: string): Record<string
         get: op("ODD coverage matrix: scenario variants and runs crossed by visibility and lighting class, with the gaps worst first", "reader", {
           parameters: [q("min_runs", { type: "integer" })],
         }),
+      },
+      "/api/collection-plan": {
+        get: op(
+          "Collection plan from the coverage gap: per (visibility × lighting × route class) targets worst first, with the runs and clips missing, whether to drive or render the cell, and a batch of scenario variants generated to close it (importable at /api/scenarios/import)",
+          "reader",
+          {
+            parameters: [q("min_runs_per_cell", { type: "integer" }), q("seconds_per_run", { type: "number" }), q("clip_seconds", { type: "number" }), q("max_targets", { type: "integer" }), q("variants_per_target", { type: "integer" }), q("vehicle_class"), q("drive_hours_cap", { type: "number" }), q("route_classes", { type: "string" }), q("gaps_only", { type: "boolean" })],
+          },
+        ),
+        post: op("Same plan from a JSON body", "reader", { requestBody: jsonBody({ $ref: "#/components/schemas/CollectionPlanOptions" }) }),
       },
       "/api/scenes": { get: op("Demo scene catalog — synthetic, generated from a fixed seed, no tenant data", "none") },
       "/api/scenes/{id}": { get: op("One demo scene: road geometry, ego and actor tracks, sensor model and events", "none", { parameters: [idParam("id")] }) },

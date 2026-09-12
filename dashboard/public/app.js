@@ -19,6 +19,7 @@
     history: [],
     fleet: { devices: [], device: null, track: [], deck: null, timer: null },
     planner: { options: null, plan: null },
+    coverage: null,    // { matrix, plan, cell } once the tab has loaded
   };
 
   const $ = (sel) => document.querySelector(sel);
@@ -527,6 +528,108 @@
     }));
   }
 
+  // ------------------------------------------------- coverage & collection plan
+  const COV_FIELDS = { min_runs_per_cell: "#cov-min-runs", max_targets: "#cov-max-targets", variants_per_target: "#cov-variants" };
+
+  async function loadCoverage() {
+    const params = new URLSearchParams();
+    for (const [key, sel] of Object.entries(COV_FIELDS)) {
+      const value = $(sel).value.trim();
+      if (value !== "") params.set(key, value);
+    }
+    if ($("#cov-gaps-only").checked) params.set("gaps_only", "true");
+    const minRuns = params.get("min_runs_per_cell");
+    const [matrix, plan] = await Promise.all([
+      api("/api/coverage" + (minRuns ? "?min_runs=" + encodeURIComponent(minRuns) : "")),
+      api("/api/collection-plan?" + params.toString()),
+    ]);
+    state.coverage = { matrix, plan, cell: state.coverage ? state.coverage.cell : null };
+    renderCoverage();
+  }
+
+  /** A cell the operator clicked, as "visibility lighting", or null for all. */
+  function coverageCellKey(target) {
+    return `${target.visibility} ${target.lighting}`;
+  }
+
+  function renderCoverage() {
+    const { matrix, plan, cell } = state.coverage;
+    const t = plan.totals, b = plan.backlog;
+    const n = (v) => Number(v).toLocaleString("en-US");
+    $("#cov-tiles").innerHTML = [
+      { label: "ODD coverage", value: fmt.num(matrix.totals.coverage_pct, 1) + " %", target: `${matrix.totals.covered_cells} of ${matrix.totals.cells} cells at ${matrix.min_runs_per_cell}+ accepted runs`, why: `${matrix.totals.thin_cells} thin · ${matrix.totals.gap_cells} empty` },
+      { label: "Runs still needed", value: n(t.runs_needed), target: `${t.targets} of ${b.targets} targets · ${n(t.scenes_needed)} clips`, why: `${n(b.runs_needed)} runs across every open cell, at ${plan.options.seconds_per_run} s per run` },
+      { label: "To render", value: n(t.sim_scenes), target: "clips from simulation", why: `${n(t.natural_drive_hours)} h of driving if waited for instead · ${n(b.sim_scenes)} clips across every open cell` },
+      { label: "To drive", value: n(t.vehicle_scenes), target: `clips · ${t.drive_hours} h on the road`, why: `${n(b.vehicle_scenes)} clips / ${n(b.drive_hours)} h across every open cell${t.unrenderable_targets ? ` · ${t.unrenderable_targets} no simulator can render` : ""}` },
+      { label: "Batch ready", value: n(t.batch_size), target: "generated variants", why: `${plan.families.length} families in the library` },
+    ].map((k) => `<div class="kpi"><div class="kpi-label">${esc(k.label)}</div><div class="kpi-value">${esc(String(k.value))}</div><div class="kpi-target">${esc(k.target)}</div><div class="kpi-why">${esc(k.why)}</div></div>`).join("");
+
+    const lighting = matrix.axes.lighting;
+    const byKey = new Map(matrix.cells.map((c) => [`${c.visibility} ${c.lighting}`, c]));
+    $("#cov-matrix").innerHTML = `<table class="data-table cov-matrix"><thead><tr><th>visibility \\ lighting</th>${lighting.map((l) => `<th class="num">${esc(l.replace(/_/g, " "))}</th>`).join("")}</tr></thead><tbody>${
+      matrix.axes.visibility.map((v) => `<tr><th>${esc(v.replace(/_/g, " "))}</th>${lighting.map((l) => {
+        const c = byKey.get(`${v} ${l}`) || { status: "gap", accepted_runs: 0, runs: 0, scenarios: 0, odd: true };
+        const key = `${v} ${l}`;
+        return `<td class="cov-cell ${c.odd ? esc(c.status) : "outside"} ${cell === key ? "is-selected" : ""}" data-cell="${esc(key)}"
+          title="${c.accepted_runs} accepted of ${c.runs} runs · ${c.scenarios} scenario variants${c.odd ? "" : " · not an ODD combination"}">
+          <b>${c.accepted_runs}</b><small>${c.scenarios} var</small></td>`;
+      }).join("")}</tr>`).join("")
+    }</tbody></table>`;
+    $("#cov-matrix").querySelectorAll("td[data-cell]").forEach((td) => td.addEventListener("click", () => {
+      state.coverage.cell = state.coverage.cell === td.dataset.cell ? null : td.dataset.cell;
+      renderCoverage();
+    }));
+
+    const targets = cell ? plan.targets.filter((x) => coverageCellKey(x) === cell) : plan.targets;
+    $("#cov-target-filter").textContent = cell ? `${cell.replace(/_/g, " ")} · ${targets.length} of ${plan.targets.length}` : "worst first";
+    const body = $("#cov-targets tbody");
+    body.innerHTML = targets.length ? targets.map((x) => `<tr class="${x.recommended_source === "sim" ? "is-sim" : ""}" title="${esc(x.reason)}">
+      <td>${esc(x.visibility.replace(/_/g, " "))}</td><td>${esc(x.lighting.replace(/_/g, " "))}</td><td>${esc(x.route_class.replace(/_/g, " "))}</td>
+      <td class="num">${x.runs_needed}</td><td class="num">${x.scenes_needed.toLocaleString("en-US")}</td>
+      <td class="num">${x.natural_drive_hours.toLocaleString("en-US")} h</td>
+      <td>${pill(x.recommended_source === "sim" ? "render" : "drive")}</td>
+      <td class="num">${fmt.num(x.priority, 1)}</td>
+      <td>${esc(x.families.join(", ") || (x.renderable ? "–" : "on-road only"))}</td>
+    </tr>`).join("") : '<tr><td colspan="9" class="empty">every cell is at quota for the selected filters</td></tr>';
+
+    $("#cov-routes tbody").innerHTML = matrix.by_route_class.map((r) => `<tr>
+      <td>${esc(r.route_class.replace(/_/g, " "))}</td><td class="num">${r.scenarios}</td><td class="num">${r.runs}</td>
+      <td class="num">${r.accepted_runs}</td><td class="num">${fmt.dur(r.duration_s)}</td></tr>`).join("");
+
+    const batch = cell ? plan.batch.filter((b) => `${b.target.visibility} ${b.target.lighting}` === cell) : plan.batch;
+    $("#cov-batch tbody").innerHTML = batch.length ? batch.map((b) => `<tr>
+      <td class="mono" title="${esc(b.content_hash || "")}">${esc(b.id)}</td><td>${esc(b.family)}</td>
+      <td>${esc(b.params.weather_preset)}</td><td>${esc(b.params.time_of_day)}</td><td>${esc(b.route_class.replace(/_/g, " "))}</td>
+      <td>${esc(b.target.visibility.replace(/_/g, " "))} / ${esc(b.target.lighting.replace(/_/g, " "))}</td>
+      <td>${esc((b.expected_events || []).join(", "))}</td></tr>`).join("")
+      : `<tr><td colspan="7" class="empty">${plan.families.length ? "no variants for the selected filters" : "the scenario library is empty — import it with toolkit/scripts/generate_library.py --dashboard"}</td></tr>`;
+    $("#cov-plan-link").href = "#planner/" + Math.max(1, t.scenes_needed);
+    $("#cov-import").disabled = !plan.batch.length;
+    $("#cov-download").disabled = !plan.batch.length;
+    $("#cov-assumptions").innerHTML = [...plan.notes.map((n) => `<li class="note">${esc(n)}</li>`), ...plan.assumptions.map((a) => `<li>${esc(a)}</li>`)].join("");
+    setHash("coverage", cell || "");
+  }
+
+  async function importCoverageBatch() {
+    const plan = state.coverage && state.coverage.plan;
+    if (!plan || !plan.batch.length) return toast("nothing to import — run a plan first");
+    const result = await api("/api/scenarios/import", { method: "POST", body: { scenarios: plan.batch, taxonomy_version: "gap-fill" } });
+    toast(`${result.imported} gap-fill variants imported — they are unreviewed in the Scenario library, and each exports as .xosc`, 6000);
+    await loadCoverage();
+  }
+
+  function downloadCoverageBatch() {
+    const plan = state.coverage && state.coverage.plan;
+    if (!plan || !plan.batch.length) return toast("nothing to download — run a plan first");
+    const blob = new Blob([JSON.stringify({ schema_version: "1.0", taxonomy_version: "gap-fill", count: plan.batch.length, scenarios: plan.batch }, null, 2)], { type: "application/json" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "collection-batch.json";
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 10000);
+    toast("batch saved — import with scripts/generate_library.py --dashboard or POST /api/scenarios/import");
+  }
+
   // ------------------------------------------------------------- evaluations
   async function loadEvaluations() {
     const data = await api("/api/evaluations");
@@ -769,7 +872,7 @@
     await window.AtlasScenes.load(id);
   }
 
-  const loaders = { overview: loadOverview, runs: loadRuns, scenarios: loadScenarios, scenes: loadScenes, evaluations: loadEvaluations, governance: loadGovernance, fleet: loadFleet, planner: loadPlanner };
+  const loaders = { overview: loadOverview, runs: loadRuns, scenarios: loadScenarios, coverage: loadCoverage, scenes: loadScenes, evaluations: loadEvaluations, governance: loadGovernance, fleet: loadFleet, planner: loadPlanner };
 
   function setHash(view, id) {
     const next = "#" + view + (id ? "/" + encodeURIComponent(id) : "");
@@ -797,6 +900,8 @@
     if (id && view === "runs") state.pendingRun = id;
     if (id && view === "scenarios") { const sel = $("#scenario-family"); if (![...sel.options].some((o) => o.value === id)) sel.add(new Option(id, id)); sel.value = id; }
     if (id && view === "fleet") state.fleet.device = id;
+    // "#coverage/fog night" restores the selected matrix cell.
+    if (id && view === "coverage") state.coverage = Object.assign({ matrix: null, plan: null }, state.coverage, { cell: id });
     if (id && view === "planner" && Number(id) > 0) $("#plan-scenes").value = Number(id);
     try {
       await loaders[view]();
@@ -844,6 +949,10 @@
     $("#fleet-auto").addEventListener("change", scheduleFleetRefresh);
     $("#fleet-window").addEventListener("change", () => { if (state.fleet.device) selectDevice(state.fleet.device).catch((err) => toast(err.message)); });
     $("#fleet-materialize").addEventListener("click", materializeTrack);
+    $("#cov-refresh").addEventListener("click", () => loadCoverage().catch((err) => toast(err.message)));
+    ["#cov-min-runs", "#cov-max-targets", "#cov-variants", "#cov-gaps-only"].forEach((id) => $(id).addEventListener("change", () => loadCoverage().catch((err) => toast(err.message))));
+    $("#cov-import").addEventListener("click", () => importCoverageBatch().catch((err) => toast(err.message)));
+    $("#cov-download").addEventListener("click", downloadCoverageBatch);
     $("#planner-form").addEventListener("submit", (ev) => { ev.preventDefault(); loadPlanner().catch((err) => toast(err.message)); });
     $("#plan-copy").addEventListener("click", copyPlan);
     $("#plan-program").addEventListener("change", () => loadPlanner().catch((err) => toast(err.message)));

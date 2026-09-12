@@ -105,6 +105,7 @@ need a writer token, just not necessarily in an `Authorization` header).
 | `GET /api/planner/options` | none | Reference tables behind the planner: dataset tiers, training programs, GPU rates, video bitrates |
 | `GET`/`POST /api/planner` | reader | Dataset size, storage and GPU-cost plan for a target corpus, plus the catalog's coverage against it |
 | `GET /api/coverage` | reader | ODD coverage matrix (visibility x lighting) with gaps worst first |
+| `GET`/`POST /api/collection-plan` | reader | Collection targets per visibility x lighting x route class, drive-or-render per cell, and a generated scenario batch that closes the gap |
 | `GET /api/scenes`, `GET /api/scenes/:id` | none | Synthetic demo scenes for the scene viewer |
 | `GET /api/xviz/logs` | none | The demo scenes as XVIZ v2 logs, with the URLs each streetscape.gl loader needs |
 | `GET /api/xviz/logs/:id/:file` | none | XVIZ file loader: `0-frame.json` timings, `1-frame.json` metadata, `n-frame.json` data frame `n - 2` |
@@ -245,6 +246,63 @@ combinations, so they are excluded from `coverage_pct`.
 
 What closing a gap *costs* is a separate question, answered by
 `/api/planner`. The matrix deliberately holds no pricing model.
+
+## Collection plan
+
+`GET /api/collection-plan` turns the matrix into work. Three things the matrix
+cannot say on its own:
+
+**What is missing, per road.** Each cell is crossed with `route_class`, because a
+cell counts as covered on three accepted runs wherever they happened to be driven
+— a condition seen only on a straight flat road still has every hairpin and
+descent open, and those are the runs that matter. Each target reports the accepted
+runs still needed, the clips they cut into at the planner's clip length, and a
+priority: the deficit weighted by how much the condition matters (visibility,
+darkness, curvature and grade each multiply it). Priority orders the work; it
+never sizes it.
+
+**Whether to drive it or render it.** The driving needed is divided by the share of
+on-road time the condition is expected to hold on the corridor. A night-fog hairpin
+descent is a few ten-thousandths of driving time, so it is hundreds of hours away and
+is recommended for simulation; clear daylight on a straight road arrives in under two
+hours of driving, so it is a collection job. Above `drive_hours_cap` (default 40 h)
+a cell is recommended for rendering. A condition no weather preset can render —
+`snow` has none — is always a collection job, and says so.
+
+The shares are rough field estimates for a Himalayan monsoon climate, not
+measurements; they are listed in the response's `assumptions`, and replacing them
+with observed corridor conditions is an open roadmap item. `totals` covers the
+returned targets and `backlog` every open one, because priority puts the
+render-only cells first and a short list would otherwise read as "nothing to drive".
+
+**Which scenarios to generate.** Each target gets variants built from *this tenant's
+own* library: a family's declared conditions, actors, expected events and parameter
+spread are recoverable from the variants already imported, so a new variant is that
+family re-parameterised into the missing condition — `valley_fog` moved to night on
+a hairpin descent, with lidar noise and dropout raised to match the fog. The batch is
+in the shape `POST /api/scenarios/import` accepts and carries the same content hash
+the toolkit computes, so the plan is runnable end to end:
+
+```sh
+curl -s "$ATLAS/api/collection-plan?max_targets=12&variants_per_target=3" -H "authorization: Bearer $TOKEN" > plan.json
+jq '{scenarios: .batch, taxonomy_version: "gap-fill"}' plan.json \
+  | curl -s -X POST "$ATLAS/api/scenarios/import" -H "authorization: Bearer $TOKEN" -H 'content-type: application/json' --data @-
+curl -s "$ATLAS/api/scenarios/<generated-id>/export/xosc" -H "authorization: Bearer $TOKEN" -o variant.xosc
+```
+
+Generated ids are namespaced `bt-gap-<visibility>-<lighting>-<route class>-<family>-NN`
+so they never collide with the taxonomy's own, and the plan is deterministic: the same
+catalog and options always produce the same batch.
+
+Options (query string or JSON body): `min_runs_per_cell`, `seconds_per_run` (defaults
+to the catalog's mean accepted run length), `clip_seconds`, `max_targets`,
+`variants_per_target`, `vehicle_class`, `drive_hours_cap`, `route_classes`, `gaps_only`.
+
+The **Coverage & collection** tab renders both: the matrix as a heatmap where
+clicking a cell filters the targets and the batch beneath it, the targets worst first
+with the wait and the drive-or-render call, "Import into the library" and "Download
+batch JSON", and the clip total linked through to the Planner so the corpus that
+closes the gap can be priced.
 
 ## Demo scenes
 

@@ -17,8 +17,19 @@ export interface CatalogBasis {
   seconds_per_run: number | null;
 }
 
-/** Coverage matrix plus the catalog counts a planner run can default from. */
-export async function coverageFor(env: Env, tenant: string, minRunsPerCell: number): Promise<{ coverage: CoverageMatrix; catalog: CatalogBasis }> {
+/** The scenario and run rows the matrix is built from, plus the catalog counts. */
+export interface CoverageBasis {
+  scenarioRows: ScenarioCoverageRow[];
+  runRows: RunCoverageRow[];
+  catalog: CatalogBasis;
+}
+
+/**
+ * One read of everything the ODD views need. Shared with the collection plan,
+ * which groups the same rows by route class as well, so both views always
+ * describe the same catalog.
+ */
+export async function coverageBasis(env: Env, tenant: string): Promise<CoverageBasis> {
   const [scenarioRows, runRows, clips, runStats] = await Promise.all([
     env.DB.prepare(
       "SELECT route_class, lighting_class, visibility_class, review_status, COUNT(*) AS variants FROM scenarios WHERE tenant_id = ?1 GROUP BY route_class, lighting_class, visibility_class, review_status",
@@ -33,18 +44,26 @@ export async function coverageFor(env: Env, tenant: string, minRunsPerCell: numb
     env.DB.prepare("SELECT COUNT(*) AS n, AVG(NULLIF(duration_s, 0)) AS avg_duration FROM runs WHERE tenant_id = ?1 AND quality_status = 'accepted'").bind(tenant).first<{ n: number; avg_duration: number | null }>(),
   ]);
 
-  const coverage = buildCoverage(scenarioRows.results, runRows.results, minRunsPerCell);
+  const scenarios = scenarioRows.results;
+  const runs = runRows.results;
   return {
-    coverage,
+    scenarioRows: scenarios,
+    runRows: runs,
     catalog: {
       accepted_runs: runStats?.n || 0,
-      runs: coverage.totals.runs,
-      scenarios: coverage.totals.scenarios,
+      runs: runs.reduce((n, r) => n + (r.runs ?? 1), 0),
+      scenarios: scenarios.reduce((n, s) => n + (s.variants ?? 1), 0),
       clips: clips?.n || 0,
       mb_per_clip: clips?.avg_bytes ? Math.round((clips.avg_bytes / 1e6) * 100) / 100 : null,
       seconds_per_run: runStats?.avg_duration ? Math.round(runStats.avg_duration * 10) / 10 : null,
     },
   };
+}
+
+/** Coverage matrix plus the catalog counts a planner run can default from. */
+export async function coverageFor(env: Env, tenant: string, minRunsPerCell: number): Promise<{ coverage: CoverageMatrix; catalog: CatalogBasis }> {
+  const basis = await coverageBasis(env, tenant);
+  return { coverage: buildCoverage(basis.scenarioRows, basis.runRows, minRunsPerCell), catalog: basis.catalog };
 }
 
 function minRunsParam(c: RouteContext): number {

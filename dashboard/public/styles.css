@@ -189,6 +189,30 @@ code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0
 .pill.stale::before { background: var(--status-warning); }
 .pill.offline::before { background: var(--text-muted); }
 
+/* ------------------------------------------- coverage and collection plan */
+.cov-matrix th { font-weight: 500; }
+.cov-matrix thead th:first-child { width: 18%; }
+.cov-matrix thead th.num { text-align: center; }
+.cov-matrix tbody th { text-align: left; color: var(--text-secondary); white-space: nowrap; }
+.cov-cell { cursor: pointer; text-align: center; border-left: 1px solid var(--grid); }
+.cov-cell b { display: block; font-size: 15px; font-variant-numeric: tabular-nums; }
+.cov-cell small { color: var(--text-muted); font-size: 10px; }
+.cov-cell.covered { background: color-mix(in srgb, var(--status-good) 16%, transparent); }
+.cov-cell.thin { background: color-mix(in srgb, var(--status-warning) 18%, transparent); }
+.cov-cell.gap { background: color-mix(in srgb, var(--status-critical) 14%, transparent); }
+.cov-cell.outside { background: var(--surface-2); color: var(--text-muted); }
+.cov-cell:hover { outline: 1px solid var(--border); }
+.cov-cell.is-selected { outline: 2px solid var(--series-1); outline-offset: -2px; }
+#cov-targets tr.is-sim td:first-child { border-left: 3px solid var(--series-2); }
+.pill.render::before { background: var(--series-2); }
+.pill.drive::before { background: var(--status-good); }
+.batch-actions { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin: 4px 0 10px; }
+.batch-actions button:first-child { background: var(--series-1); border-color: var(--series-1); color: #fff; }
+.batch-actions button:disabled { opacity: 0.5; cursor: not-allowed; }
+.batch-link { font-size: 12px; color: var(--text-secondary); text-decoration: none; margin-left: auto; }
+.batch-link:hover { color: var(--text-primary); }
+.assumptions li.note { color: var(--status-warning); }
+
 /* ------------------------------------------------------------ demo scenes */
 .odd-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
 .odd-chip { border: 1px solid var(--border); border-radius: 999px; padding: 3px 10px; font-size: 12px; background: var(--surface-1); }

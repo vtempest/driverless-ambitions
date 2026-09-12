@@ -13,6 +13,7 @@ import { exportRun, exportScenarioXosc } from "./routes/exports";
 import { deviceTrack, ingestOsmAnd, ingestTraccar, listFleet, materializeTrack, postPositions } from "./routes/fleet";
 import { getPlanner, getPlannerOptions, postPlanner } from "./routes/planner";
 import { getCoverage } from "./routes/coverage";
+import { getCollectionPlan, postCollectionPlan } from "./routes/collection_plan";
 import { getScene, getScenes } from "./routes/scenes";
 import { getLogFile, listLogs, xvizSocket } from "./routes/xviz";
 
@@ -27,6 +28,8 @@ const router = new Router()
   .get("/api/planner", getPlanner)
   .post("/api/planner", postPlanner)
   .get("/api/coverage", getCoverage)
+  .get("/api/collection-plan", getCollectionPlan)
+  .post("/api/collection-plan", postCollectionPlan)
   .get("/api/scenes", getScenes)
   .get("/api/scenes/:id", getScene)
   .get("/api/xviz/logs", listLogs)

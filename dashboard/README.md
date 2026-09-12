@@ -35,6 +35,18 @@ Beyond the run/scenario/evaluation/clip API, the Worker also exposes:
   too few runs do, and a gap when nothing is there; gaps come back worst first.
   Runs with no scenario behind them land in an `unlabelled` row and column that
   is shown but excluded from the coverage percentage.
+* `GET`/`POST /api/collection-plan` — the gap turned into work. Splits each cell
+  by route class as well, so "fog at night" becomes "fog at night on a hairpin
+  descent", and per target reports the accepted runs still missing, the clips
+  they cut into, the expected on-road hours before the condition occurs on its
+  own, and whether to drive it or render it. Cells no weather preset can render
+  (snow) are always driving jobs. It then generates a batch of scenario variants
+  — this tenant's own families re-parameterised into the missing condition, with
+  sensor degradation matched to the weather — in the shape
+  `POST /api/scenarios/import` accepts, so the plan is runnable: import it, then
+  export each variant as OpenSCENARIO. Powers the Coverage &amp; collection tab,
+  where a matrix cell filters the targets and the batch, and the clip total
+  links through to the Planner.
 * `GET /api/scenes`, `GET /api/scenes/:id` — synthetic demo scenes, generated
   from a fixed seed. No tenant data and no authentication, so the Demo scenes
   tab works on a fresh deployment before a single run is ingested. Each scene

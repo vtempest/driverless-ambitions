@@ -22,6 +22,7 @@
       <button class="tab is-active" data-view="overview" role="tab">Overview</button>
       <button class="tab" data-view="runs" role="tab">Runs &amp; playback</button>
       <button class="tab" data-view="scenarios" role="tab">Scenario library</button>
+      <button class="tab" data-view="coverage" role="tab">Coverage &amp; collection</button>
       <button class="tab" data-view="scenes" role="tab">Demo scenes</button>
       <button class="tab" data-view="evaluations" role="tab">Evaluations</button>
       <button class="tab" data-view="governance" role="tab">Safety &amp; governance</button>
@@ -134,6 +135,53 @@
       </tr></thead><tbody></tbody></table></div>
     </section>
 
+    <section id="view-coverage" class="view" aria-label="ODD coverage and collection plan">
+      <div class="section-head">
+        <h1>ODD coverage &amp; collection plan</h1>
+        <p class="muted">The matrix from <code>/api/coverage</code> says which parts of the operational design domain are missing. <code>/api/collection-plan</code> turns that into work: what is missing per weather × lighting × road, whether the cell is worth waiting for on the road or has to be rendered, and a batch of scenario variants generated to close it.</p>
+        <div class="filters">
+          <label>Accepted runs per cell <input id="cov-min-runs" type="number" min="1" max="100" step="1" value="3"></label>
+          <label>Targets <input id="cov-max-targets" type="number" min="1" max="200" step="1" value="12"></label>
+          <label>Variants each <input id="cov-variants" type="number" min="0" max="20" step="1" value="3"></label>
+          <label class="check"><input id="cov-gaps-only" type="checkbox"> gaps only</label>
+          <button id="cov-refresh" type="button">Plan</button>
+        </div>
+      </div>
+      <div class="kpi-grid" id="cov-tiles"></div>
+      <div class="card table-card">
+        <h2>Coverage matrix <span class="muted">accepted runs per cell · click a cell to filter the targets</span></h2>
+        <div id="cov-matrix"><div class="empty">connect to load the matrix</div></div>
+      </div>
+      <div class="two-col">
+        <div class="card table-card">
+          <h2>Collection targets <span class="muted" id="cov-target-filter">worst first</span></h2>
+          <table id="cov-targets" class="data-table"><thead><tr>
+            <th>Visibility</th><th>Lighting</th><th>Road</th><th class="num" title="Accepted runs still needed in this cell">Runs</th><th class="num" title="Clips those runs cut into">Clips</th><th class="num" title="Expected driving hours before this condition occurs on its own">Wait</th><th>Do it by</th><th class="num" title="Missing runs weighted by how much the condition matters">Priority</th><th>Families</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+        <div class="card table-card">
+          <h2>By route class <span class="muted">what the catalog holds today</span></h2>
+          <table id="cov-routes" class="data-table"><thead><tr>
+            <th>Route class</th><th class="num">Scenarios</th><th class="num">Runs</th><th class="num">Accepted</th><th class="num">Collected</th>
+          </tr></thead><tbody></tbody></table>
+        </div>
+      </div>
+      <div class="card table-card">
+        <h2>Scenario generation batch <span class="muted">this tenant's families re-parameterised into the missing conditions</span></h2>
+        <div class="batch-actions">
+          <button id="cov-import" type="button">Import into the library</button>
+          <button id="cov-download" type="button">Download batch JSON</button>
+          <a id="cov-plan-link" class="batch-link" href="#planner">Size the corpus in the planner &#8599;</a>
+        </div>
+        <table id="cov-batch" class="data-table"><thead><tr>
+          <th>Variant</th><th>Family</th><th>Weather</th><th>Time</th><th>Road</th><th>Closes</th><th>Expected events</th>
+        </tr></thead><tbody></tbody></table>
+      </div>
+      <div class="card">
+        <h2>Notes &amp; assumptions</h2>
+        <ul id="cov-assumptions" class="assumptions"></ul>
+      </div>
+    </section>
 
     <section id="view-scenes" class="view" aria-label="Demo scenes">
       <div class="section-head">

@@ -134,7 +134,8 @@ The fine-grained, actionable list (with target files and upstream tools) is main
 - [x] Clip governance: review, release and audit workflow in the dashboard
 - [ ] CVAT / Label Studio round-trip: push released clips as labeling tasks, import labels as ground truth
 - [ ] FiftyOne dataset export for coverage and duplicate analysis
-- [ ] Coverage matrix: scenarios and runs by weather × lighting × route class with gaps highlighted
+- [x] Coverage matrix: scenarios and runs by weather × lighting, with route class crossed in by the collection plan, gaps highlighted worst first
+- [x] Collection plan: per-cell run and clip targets, drive-or-render per condition, and a generated scenario batch that closes the gap
 - [ ] Edge-case discovery dashboard: events per 100 km by class, trending
 - [ ] Declarative quality suites (Great Expectations / pandera) exported from the Q-gates
 - [ ] Local labeling-workforce workflow (Phase 2)
@@ -147,6 +148,7 @@ The fine-grained, actionable list (with target files and upstream tools) is main
 - [x] Multi-tenant token auth with roles; nightly KPI snapshots via cron
 - [x] Dataset and compute planner: corpus size, storage and marketplace GPU cost bands for a training program, measured against the catalog's coverage
 - [ ] Live marketplace GPU prices and saved plans, so a budget line is quoted rather than estimated
+- [x] Coverage &amp; collection tab: the ODD matrix as a heatmap, the collection targets worst first, and a one-click import of the generated scenario batch
 - [x] streetscape.gl/XVIZ log viewer at `/viewer/`: ego pose and mesh, simulated lidar, actor boxes with ranges, road geometry, planned trajectory, synchronized metric charts and a scene-event table
 - [x] XVIZ v2 served from Workers — cached per-frame files and a `WebSocketPair` stream, so both of streetscape.gl's loaders work against the same origin
 - [ ] deck.gl route playback with synchronized video/telemetry/event timeline
